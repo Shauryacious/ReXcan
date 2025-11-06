@@ -1,4 +1,4 @@
-# ResXcan
+# ReXcan
 
 A full-stack application with client and server components.
 
