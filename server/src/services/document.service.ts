@@ -112,3 +112,21 @@ export const updateDocumentStatus = async (
   }
 };
 
+export const updateDocumentExtractedData = async (
+  documentId: string,
+  extractedData: IDocument['extractedData']
+): Promise<IDocument | null> => {
+  try {
+    const document = await Document.findByIdAndUpdate(
+      documentId,
+      { extractedData },
+      { new: true }
+    );
+
+    return document;
+  } catch (error) {
+    logger.error('Error updating document extracted data:', error);
+    throw error;
+  }
+};
+

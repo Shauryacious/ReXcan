@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import DocumentDetailsModal from '@/components/DocumentDetailsModal';
 import DocumentsList from '@/components/DocumentsList';
 import FileUpload from '@/components/FileUpload';
 import { documentAPI } from '@/services/document.api';
@@ -10,6 +11,8 @@ const Dashboard = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const handleFileSelect = async (file: File) => {
     try {
@@ -39,9 +42,25 @@ const Dashboard = () => {
     }
   };
 
-  const handleDocumentSelect = (document: Document) => {
-    // TODO: Navigate to document detail page or open document viewer
-    console.log('Selected document:', document);
+  const handleDocumentSelect = async (document: Document) => {
+    // Fetch full document details including extracted data
+    try {
+      const response = await documentAPI.getDocument(document.id);
+      if (response.success && response.data) {
+        setSelectedDocument(response.data.document);
+        setIsModalOpen(true);
+      }
+    } catch (error) {
+      console.error('Error fetching document details:', error);
+      // Fallback to using the document from the list
+      setSelectedDocument(document);
+      setIsModalOpen(true);
+    }
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedDocument(null);
   };
 
   return (
@@ -121,6 +140,13 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* Document Details Modal */}
+      <DocumentDetailsModal
+        document={selectedDocument}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+      />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document as MongooseDocument, Schema } from 'mongoose';
 
 export enum DocumentType {
   PDF = 'pdf',
@@ -13,7 +13,7 @@ export enum DocumentStatus {
   FAILED = 'failed',
 }
 
-export interface IDocument extends Document {
+export interface IDocument extends MongooseDocument {
   userId: mongoose.Types.ObjectId;
   fileName: string;
   originalFileName: string;
@@ -32,6 +32,26 @@ export interface IDocument extends Document {
   };
   errorMessage?: string;
   processedAt?: Date;
+  extractedData?: {
+    invoiceNumber?: string;
+    vendorName?: string;
+    invoiceDate?: string;
+    dueDate?: string;
+    totalAmount?: number;
+    currency?: string;
+    lineItems?: Array<{
+      description?: string;
+      quantity?: number;
+      unitPrice?: number;
+      amount?: number;
+    }>;
+    taxInformation?: {
+      taxRate?: number;
+      taxAmount?: number;
+    };
+    paymentTerms?: string;
+    rawExtraction?: Record<string, unknown>;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,11 +109,32 @@ const documentSchema = new Schema<IDocument>(
     },
     errorMessage: String,
     processedAt: Date,
+    extractedData: {
+      invoiceNumber: String,
+      vendorName: String,
+      invoiceDate: String,
+      dueDate: String,
+      totalAmount: Number,
+      currency: String,
+      lineItems: [{
+        description: String,
+        quantity: Number,
+        unitPrice: Number,
+        amount: Number,
+      }],
+      taxInformation: {
+        taxRate: Number,
+        taxAmount: Number,
+      },
+      paymentTerms: String,
+      rawExtraction: Schema.Types.Mixed,
+    },
   },
   {
     timestamps: true,
     toJSON: {
-      transform: (_doc, ret) => {
+      transform: (_doc: unknown, ret: Record<string, unknown>) => {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete ret.__v;
         return ret;
       },

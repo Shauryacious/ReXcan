@@ -1,10 +1,18 @@
 import { Worker, Job } from 'bullmq';
 import { QueueName } from '../config/queue.js';
 import { DocumentJobData } from '../config/queue.js';
-import { updateDocumentStatus, getDocumentById } from '../services/document.service.js';
+import {
+  updateDocumentStatus,
+  updateDocumentExtractedData,
+} from '../services/document.service.js';
 import { DocumentStatus } from '../models/Document.model.js';
 import { logger } from '../utils/logger.js';
 import { env } from '../config/env.js';
+import {
+  extractInvoiceDataFromImage,
+  extractInvoiceDataFromPDF,
+} from '../services/gemini.service.js';
+import path from 'path';
 
 // Worker configuration
 const workerOptions = {
@@ -24,7 +32,7 @@ const workerOptions = {
 export const documentWorker = new Worker<DocumentJobData>(
   QueueName.DOCUMENT_PROCESSING,
   async (job: Job<DocumentJobData>) => {
-    const { documentId, userId, filePath, fileType, fileName } = job.data;
+    const { documentId, filePath, fileType, fileName } = job.data;
 
     logger.info(`Processing document: ${documentId} (Job ID: ${job.id})`);
 
@@ -32,32 +40,40 @@ export const documentWorker = new Worker<DocumentJobData>(
       // Update status to processing
       await updateDocumentStatus(documentId, DocumentStatus.PROCESSING);
 
-      // TODO: Implement preprocessing logic here
-      // This should include:
-      // 1. File validation and verification
-      // 2. Extract metadata (page count for PDFs, dimensions for images)
-      // 3. OCR processing if needed
-      // 4. File format conversion if needed
-      // 5. Quality checks
-      // 6. Any other preprocessing steps required before main processing
-
-      logger.info(`TODO: Preprocessing for document ${documentId}`);
+      logger.info(`Processing document: ${documentId}`);
       logger.info(`File path: ${filePath}`);
       logger.info(`File type: ${fileType}`);
       logger.info(`File name: ${fileName}`);
 
-      // Simulate processing delay (remove when implementing actual preprocessing)
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Get the full file path
+      const fullFilePath = path.resolve(env.storage.basePath, filePath);
 
-      // For now, mark as processed (update this when implementing actual preprocessing)
+      // Extract invoice data using Google Gemini API
+      let extractedData;
+      if (fileType === 'pdf') {
+        logger.info(`Extracting data from PDF: ${fullFilePath}`);
+        extractedData = await extractInvoiceDataFromPDF(fullFilePath);
+      } else {
+        logger.info(`Extracting data from image: ${fullFilePath}`);
+        extractedData = await extractInvoiceDataFromImage(fullFilePath);
+      }
+
+      // Update document with extracted data
+      if (extractedData) {
+        await updateDocumentExtractedData(documentId, extractedData);
+        logger.info(`Extracted data saved for document ${documentId}`);
+      }
+
+      // Mark as processed
       await updateDocumentStatus(documentId, DocumentStatus.PROCESSED);
 
-      logger.info(`Document ${documentId} preprocessing completed`);
+      logger.info(`Document ${documentId} processing completed successfully`);
 
       return {
         success: true,
         documentId,
-        message: 'Document preprocessing completed (TODO: implement actual preprocessing)',
+        message: 'Document processing completed',
+        extractedData,
       };
     } catch (error) {
       logger.error(`Error processing document ${documentId}:`, error);

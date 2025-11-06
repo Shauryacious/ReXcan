@@ -3,6 +3,27 @@ export type DocumentType = 'pdf' | 'image';
 
 export type DocumentStatus = 'uploaded' | 'queued' | 'processing' | 'processed' | 'failed';
 
+export interface ExtractedData {
+  invoiceNumber?: string;
+  vendorName?: string;
+  invoiceDate?: string;
+  dueDate?: string;
+  totalAmount?: number;
+  currency?: string;
+  lineItems?: Array<{
+    description?: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+  }>;
+  taxInformation?: {
+    taxRate?: number;
+    taxAmount?: number;
+  };
+  paymentTerms?: string;
+  rawExtraction?: Record<string, unknown>;
+}
+
 export interface Document {
   id: string;
   userId: string;
@@ -21,6 +42,7 @@ export interface Document {
       height?: number;
     };
   };
+  extractedData?: ExtractedData;
   errorMessage?: string;
   processedAt?: string;
   createdAt: string;
