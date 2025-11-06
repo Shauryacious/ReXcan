@@ -2,9 +2,13 @@ import app from './app.js';
 import { env } from './config/env.js';
 import { database } from './config/database.js';
 import { logger } from './utils/logger.js';
+import { initializeStorage } from './config/storage.js';
 
 const startServer = async (): Promise<void> => {
   try {
+    // Initialize storage directories
+    await initializeStorage();
+
     // Connect to database
     await database.connect();
 

@@ -45,6 +45,9 @@ tmp/
 temp/
 *.tmp
 
+# Storage (uploaded files)
+storage/
+
 # TypeScript
 *.tsbuildinfo
 

@@ -4,6 +4,7 @@ import { errorHandler } from './middlewares/errorHandler.js';
 import { notFoundHandler } from './middlewares/notFoundHandler.js';
 import { healthRoutes } from './routes/health.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
+import { documentRoutes } from './routes/document.routes.js';
 
 const createApp = (): Express => {
   const app = express();
@@ -16,6 +17,7 @@ const createApp = (): Express => {
 
   // API routes
   app.use('/api/v1/auth', authRoutes);
+  app.use('/api/v1/documents', documentRoutes);
 
   // 404 handler
   app.use(notFoundHandler);
