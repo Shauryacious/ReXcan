@@ -1,6 +1,13 @@
 import { Link } from 'react-router-dom';
 
+import { useAuth } from '@/contexts/AuthContext';
+
 const Header = () => {
+  const { isAuthenticated, user } = useAuth();
+  
+  // Get first name from full name
+  const firstName = user?.name?.split(' ')[0] || '';
+
   return (
     <header 
       className="sticky top-0 z-50 shadow-lg"
@@ -52,27 +59,68 @@ const Header = () => {
             >
               Contact
             </Link>
+            {isAuthenticated && (
+              <>
+                <Link
+                  to="/dashboard"
+                  className="text-white hover:text-rexcan-bright-cyan-primary transition-colors font-medium"
+                  style={{ color: '#FFFFFF' }}
+                >
+                  Dashboard
+                </Link>
+              </>
+            )}
           </div>
 
-          {/* CTA Button */}
+          {/* Auth Buttons */}
           <div className="flex items-center space-x-4">
-            <Link
-              to="/login"
-              className="text-white hover:text-rexcan-bright-cyan-primary transition-colors font-medium"
-              style={{ color: '#FFFFFF' }}
-            >
-              Login
-            </Link>
-            <Link
-              to="/demo"
-              className="px-6 py-2 rounded-lg font-semibold text-white hover:shadow-lg hover:scale-105 transition-all"
-              style={{
-                backgroundColor: '#00FFD8',
-                color: '#002D62'
-              }}
-            >
-              Try Demo
-            </Link>
+            {isAuthenticated ? (
+              <Link
+                to="/profile"
+                className="flex items-center space-x-2 group"
+                title="Profile"
+              >
+                <span className="text-white font-medium hidden sm:block group-hover:text-rexcan-bright-cyan-primary transition-colors">
+                  {firstName}
+                </span>
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 transition-all hover:scale-110">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-6 w-6 text-white"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                    />
+                  </svg>
+                </div>
+              </Link>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  className="text-white hover:text-rexcan-bright-cyan-primary transition-colors font-medium"
+                  style={{ color: '#FFFFFF' }}
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/signup"
+                  className="px-6 py-2 rounded-lg font-semibold text-white hover:shadow-lg hover:scale-105 transition-all"
+                  style={{
+                    backgroundColor: '#00FFD8',
+                    color: '#002D62'
+                  }}
+                >
+                  Sign Up
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>

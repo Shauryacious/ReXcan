@@ -13,6 +13,9 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const currentRef = cardRef.current;
+    if (!currentRef) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -27,14 +30,10 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
       { threshold: 0.2 }
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
+    observer.observe(currentRef);
 
     return () => {
-      if (cardRef.current) {
-        observer.unobserve(cardRef.current);
-      }
+      observer.unobserve(currentRef);
     };
   }, [delay]);
 
@@ -43,7 +42,7 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
       ref={cardRef}
       className={`group relative p-12 rounded-3xl transition-all duration-700 hover:-translate-y-5 ${
         number === 2 
-          ? 'bg-gradient-to-br from-rexcan-dark-blue-primary via-rexcan-dark-blue-secondary to-rexcan-dark-blue-primary shadow-2xl' 
+          ? 'bg-white shadow-2xl hover:shadow-3xl border-2' 
           : 'bg-white shadow-2xl hover:shadow-3xl'
       } ${
         isVisible 
@@ -51,7 +50,8 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
           : 'opacity-0 translate-y-16 scale-95'
       }`}
       style={{
-        transitionDelay: isVisible ? `${delay}ms` : '0ms'
+        transitionDelay: isVisible ? `${delay}ms` : '0ms',
+        borderColor: number === 2 ? '#00FFD8' : 'transparent'
       }}
     >
       {/* Glow effect on hover */}
@@ -71,15 +71,9 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
       <div className="relative z-10">
         {/* Icon Badge */}
         <div 
-          className={`w-28 h-28 rounded-3xl flex items-center justify-center mb-8 mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 ${
-            number === 2 
-              ? 'bg-rexcan-bright-cyan-primary text-rexcan-dark-blue-primary shadow-2xl' 
-              : 'bg-logo-gradient text-white shadow-2xl'
-          }`}
+          className="w-28 h-28 rounded-3xl flex items-center justify-center mb-8 mx-auto transition-all duration-500 group-hover:scale-110 group-hover:rotate-3 bg-logo-gradient text-white shadow-2xl"
           style={{
-            background: number === 2 
-              ? '#00FFD8' 
-              : 'linear-gradient(135deg, #002D62 0%, #191970 50%, #00FFD8 100%)'
+            background: 'linear-gradient(135deg, #002D62 0%, #191970 50%, #00FFD8 100%)'
           }}
         >
           <span className="text-5xl">{icon}</span>
@@ -87,25 +81,22 @@ const StepCard = ({ number, title, description, delay, icon }: StepCardProps) =>
 
         {/* Step Number */}
         <div 
-          className={`absolute top-6 right-6 w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold ${
-            number === 2 
-              ? 'bg-white/20 text-rexcan-bright-cyan-primary backdrop-blur-sm' 
-              : 'bg-rexcan-dark-blue-primary/10 text-rexcan-dark-blue-secondary'
-          }`}
+          className="absolute top-6 right-6 w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold bg-rexcan-dark-blue-primary/10 text-rexcan-dark-blue-secondary"
         >
           {number}
         </div>
 
         <h3 
           className={`text-3xl font-bold mb-6 text-center ${
-            number === 2 ? 'text-white' : 'text-rexcan-dark-blue-secondary'
+            number === 2 ? 'text-rexcan-dark-blue-primary' : 'text-rexcan-dark-blue-secondary'
           }`}
+          style={number === 2 ? { color: '#002D62' } : {}}
         >
           {title}
         </h3>
         <p 
           className={`text-lg leading-relaxed text-center ${
-            number === 2 ? 'text-rexcan-light-grey-secondary' : 'text-rexcan-dark-blue-primary'
+            number === 2 ? 'text-rexcan-dark-blue-primary' : 'text-rexcan-dark-blue-primary'
           }`}
         >
           {description}
@@ -120,6 +111,9 @@ const HowItWorks = () => {
   const titleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const currentRef = titleRef.current;
+    if (!currentRef) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -132,14 +126,10 @@ const HowItWorks = () => {
       { threshold: 0.3 }
     );
 
-    if (titleRef.current) {
-      observer.observe(titleRef.current);
-    }
+    observer.observe(currentRef);
 
     return () => {
-      if (titleRef.current) {
-        observer.unobserve(titleRef.current);
-      }
+      observer.unobserve(currentRef);
     };
   }, []);
 
@@ -200,17 +190,6 @@ const HowItWorks = () => {
           </div>
           
           <div className="grid md:grid-cols-3 gap-12 relative">
-            {/* Connecting line (desktop only) */}
-            <div className="hidden md:block absolute top-28 left-1/4 right-1/4 h-1">
-              <div 
-                className="h-full rounded-full"
-                style={{
-                  background: 'linear-gradient(90deg, #00FFD8 0%, #39FF14 50%, #00FFD8 100%)',
-                  opacity: 0.3
-                }}
-              />
-            </div>
-
             <StepCard
               number={1}
               title="Upload Invoice"

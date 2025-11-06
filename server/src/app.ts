@@ -3,6 +3,7 @@ import { setupMiddlewares } from './middlewares/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { notFoundHandler } from './middlewares/notFoundHandler.js';
 import { healthRoutes } from './routes/health.routes.js';
+import { authRoutes } from './routes/auth.routes.js';
 
 const createApp = (): Express => {
   const app = express();
@@ -13,8 +14,8 @@ const createApp = (): Express => {
   // Health check route (before API routes)
   app.use('/health', healthRoutes);
 
-  // API routes will be added here
-  // app.use('/api/v1', apiRoutes);
+  // API routes
+  app.use('/api/v1/auth', authRoutes);
 
   // 404 handler
   app.use(notFoundHandler);
