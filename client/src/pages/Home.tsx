@@ -1,4 +1,5 @@
 import Hero from '@/components/Hero';
+import HowItWorks from '@/components/HowItWorks';
 import StatsSection from '@/components/StatsSection';
 
 const Home = () => {
@@ -10,61 +11,7 @@ const Home = () => {
       <StatsSection />
       
       {/* How It Works Section */}
-      <section 
-        className="py-20 bg-gradient-to-b from-rexcan-light-grey-secondary to-white"
-        style={{
-          background: 'linear-gradient(to bottom, #EAEAEA 0%, #FFFFFF 100%)'
-        }}
-      >
-        <div className="container mx-auto px-6">
-          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-4xl md:text-5xl font-bold bg-text-gradient bg-clip-text text-transparent mb-6">
-              How It Works
-            </h2>
-            <p className="text-xl text-rexcan-dark-blue-secondary mb-12 font-medium">
-              Our AI-powered pipeline processes invoices in three simple steps
-            </p>
-            
-            <div className="grid md:grid-cols-3 gap-8">
-              <div className="bg-white p-8 rounded-xl shadow-lg border-2 border-rexcan-light-grey-primary hover:border-rexcan-bright-cyan-primary transition-all hover:shadow-xl hover:-translate-y-2">
-                <div className="w-16 h-16 bg-logo-gradient rounded-full flex items-center justify-center text-white text-2xl font-bold mb-4 mx-auto shadow-md">
-                  1
-                </div>
-                <h3 className="text-xl font-semibold text-rexcan-dark-blue-secondary mb-3">
-                  Upload Invoice
-                </h3>
-                <p className="text-rexcan-dark-blue-primary">
-                  Upload invoices in any format—PDF, scanned images, or email attachments
-                </p>
-              </div>
-              
-              <div className="bg-gradient-to-br from-rexcan-dark-blue-primary to-rexcan-dark-blue-secondary p-8 rounded-xl shadow-lg border-2 border-rexcan-bright-cyan-primary/30 hover:border-rexcan-bright-cyan-primary transition-all hover:shadow-xl hover:-translate-y-2">
-                <div className="w-16 h-16 bg-rexcan-bright-cyan-primary rounded-full flex items-center justify-center text-rexcan-dark-blue-primary text-2xl font-bold mb-4 mx-auto shadow-md">
-                  2
-                </div>
-                <h3 className="text-xl font-semibold text-white mb-3">
-                  AI Extraction
-                </h3>
-                <p className="text-rexcan-light-grey-secondary">
-                  Our AI extracts key fields like invoice number, vendor, amount, and dates
-                </p>
-              </div>
-              
-              <div className="bg-white p-8 rounded-xl shadow-lg border-2 border-rexcan-light-grey-primary hover:border-rexcan-bright-cyan-secondary transition-all hover:shadow-xl hover:-translate-y-2">
-                <div className="w-16 h-16 bg-logo-gradient rounded-full flex items-center justify-center text-white text-2xl font-bold mb-4 mx-auto shadow-md">
-                  3
-                </div>
-                <h3 className="text-xl font-semibold text-rexcan-dark-blue-secondary mb-3">
-                  Get Structured Data
-                </h3>
-                <p className="text-rexcan-dark-blue-primary">
-                  Receive clean, standardized JSON/CSV output ready for your accounting system
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <HowItWorks />
 
       {/* Features Highlight Section */}
       <section 
