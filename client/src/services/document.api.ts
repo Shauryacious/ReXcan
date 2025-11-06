@@ -14,14 +14,17 @@ class DocumentAPI {
   /**
    * Upload a document (image or PDF)
    * @param file - File to upload
+   * @param model - AI model to use for extraction ('gemini', 'openai', 'groq', 'claude', 'rexcan', 'best')
    * @param onUploadProgress - Optional progress callback
    */
   async uploadDocument(
     file: File,
+    model: string = 'best',
     onUploadProgress?: (progress: number) => void
   ): Promise<DocumentUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('model', model);
 
     const response = await apiClient.post<DocumentUploadResponse>(
       '/documents/upload',

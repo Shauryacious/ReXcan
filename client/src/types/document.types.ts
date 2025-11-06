@@ -35,6 +35,7 @@ export interface Document {
   fileSize: number;
   status: DocumentStatus;
   queueJobId?: string;
+  selectedModel?: string;
   metadata?: {
     pageCount?: number;
     dimensions?: {

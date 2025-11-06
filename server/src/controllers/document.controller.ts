@@ -21,6 +21,13 @@ export const uploadDocument = asyncHandler(
     const userId = (req.user as { _id: { toString: () => string } })._id.toString();
     const file = req.file;
 
+    // Get selected model from request body or query, default to 'best'
+    const selectedModel = (req.body.model || req.query.model || 'best') as string;
+
+    // Validate model
+    const validModels = ['gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'];
+    const model = validModels.includes(selectedModel) ? selectedModel : 'best';
+
     // Determine file type
     const fileExtension = path.extname(file.originalname).toLowerCase();
     const fileType =
@@ -35,6 +42,7 @@ export const uploadDocument = asyncHandler(
       fileType,
       mimeType: file.mimetype,
       fileSize: file.size,
+      selectedModel: model,
     });
 
     logger.info(`Document uploaded: ${document._id} by user: ${userId}`);

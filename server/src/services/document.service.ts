@@ -11,6 +11,7 @@ export interface CreateDocumentInput {
   fileType: DocumentType;
   mimeType: string;
   fileSize: number;
+  selectedModel?: string; // AI model: 'gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'
 }
 
 export const createDocument = async (
@@ -33,7 +34,14 @@ export const createDocument = async (
       filePath: input.filePath,
       fileType: input.fileType === DocumentType.PDF ? 'pdf' : 'image',
       fileName: input.fileName,
+      selectedModel: input.selectedModel || 'best', // Default to 'best' if not specified
     };
+
+    // Store the selected model in the document
+    if (input.selectedModel) {
+      document.selectedModel = input.selectedModel;
+      await document.save();
+    }
 
     const jobId = await addDocumentToQueue(jobData);
 

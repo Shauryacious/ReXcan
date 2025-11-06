@@ -8,10 +8,7 @@ import {
 import { DocumentStatus } from '../models/Document.model.js';
 import { logger } from '../utils/logger.js';
 import { env } from '../config/env.js';
-import {
-  extractInvoiceDataFromImage,
-  extractInvoiceDataFromPDF,
-} from '../services/gemini.service.js';
+import { AIServiceRouter } from '../services/ai.service.router.js';
 import path from 'path';
 
 // Worker configuration
@@ -32,7 +29,7 @@ const workerOptions = {
 export const documentWorker = new Worker<DocumentJobData>(
   QueueName.DOCUMENT_PROCESSING,
   async (job: Job<DocumentJobData>) => {
-    const { documentId, filePath, fileType, fileName } = job.data;
+    const { documentId, filePath, fileType, fileName, selectedModel = 'best' } = job.data;
 
     logger.info(`Processing document: ${documentId} (Job ID: ${job.id})`);
 
@@ -48,14 +45,14 @@ export const documentWorker = new Worker<DocumentJobData>(
       // Get the full file path
       const fullFilePath = path.resolve(env.storage.basePath, filePath);
 
-      // Extract invoice data using Google Gemini API
+      // Extract invoice data using the selected AI model
       let extractedData;
       if (fileType === 'pdf') {
-        logger.info(`Extracting data from PDF: ${fullFilePath}`);
-        extractedData = await extractInvoiceDataFromPDF(fullFilePath);
+        logger.info(`Extracting data from PDF using ${selectedModel}: ${fullFilePath}`);
+        extractedData = await AIServiceRouter.extractInvoiceDataFromPDF(fullFilePath, selectedModel);
       } else {
-        logger.info(`Extracting data from image: ${fullFilePath}`);
-        extractedData = await extractInvoiceDataFromImage(fullFilePath);
+        logger.info(`Extracting data from image using ${selectedModel}: ${fullFilePath}`);
+        extractedData = await AIServiceRouter.extractInvoiceDataFromImage(fullFilePath, selectedModel);
       }
 
       // Update document with extracted data

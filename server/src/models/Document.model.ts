@@ -32,6 +32,7 @@ export interface IDocument extends MongooseDocument {
   };
   errorMessage?: string;
   processedAt?: Date;
+  selectedModel?: string; // AI model used for extraction: 'gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'
   extractedData?: {
     invoiceNumber?: string;
     vendorName?: string;
@@ -109,6 +110,7 @@ const documentSchema = new Schema<IDocument>(
     },
     errorMessage: String,
     processedAt: Date,
+    selectedModel: String,
     extractedData: {
       invoiceNumber: String,
       vendorName: String,

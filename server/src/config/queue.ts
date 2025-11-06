@@ -73,6 +73,7 @@ export interface DocumentJobData {
   filePath: string;
   fileType: 'pdf' | 'image';
   fileName: string;
+  selectedModel?: string; // AI model: 'gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'
 }
 
 export const addDocumentToQueue = async (data: DocumentJobData): Promise<string> => {

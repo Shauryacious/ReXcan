@@ -97,6 +97,14 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetail
                 <p className="text-sm text-rexcan-dark-blue-secondary">File Type</p>
                 <p className="font-medium uppercase">{doc.fileType}</p>
               </div>
+              {doc.selectedModel && (
+                <div>
+                  <p className="text-sm text-rexcan-dark-blue-secondary">AI Model Used</p>
+                  <p className="font-medium capitalize">
+                    {doc.selectedModel === 'best' ? 'Best Model (Recommended)' : doc.selectedModel}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-rexcan-dark-blue-secondary">File Size</p>
                 <p className="font-medium">
