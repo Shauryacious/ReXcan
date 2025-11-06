@@ -1,38 +1,28 @@
-import { useState } from 'react'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 
-import reactLogo from '@/assets/react.svg'
-import viteLogo from '/vite.svg'
+import Footer from '@/components/Footer';
+import Header from '@/components/Header';
+import Home from '@/pages/Home';
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
-      <div className="flex gap-8 mb-8">
-        <a href="https://vite.dev" target="_blank" className="transition-transform hover:scale-110">
-          <img src={viteLogo} className="h-24 w-24" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank" className="transition-transform hover:scale-110 animate-spin-slow">
-          <img src={reactLogo} className="h-24 w-24" alt="React logo" />
-        </a>
+    <Router>
+      <div className="min-h-screen flex flex-col bg-white">
+        <Header />
+        <main className="flex-grow w-full">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/features" element={<div className="min-h-screen bg-gradient-to-b from-rexcan-light-grey-secondary to-white"><div className="container mx-auto px-6 py-20"><h1 className="text-4xl md:text-5xl font-bold bg-text-gradient bg-clip-text text-transparent mb-4">Features</h1><p className="text-rexcan-dark-blue-secondary text-lg">Coming soon...</p></div></div>} />
+            <Route path="/about" element={<div className="min-h-screen bg-gradient-to-b from-rexcan-light-grey-secondary to-white"><div className="container mx-auto px-6 py-20"><h1 className="text-4xl md:text-5xl font-bold bg-text-gradient bg-clip-text text-transparent mb-4">About</h1><p className="text-rexcan-dark-blue-secondary text-lg">Coming soon...</p></div></div>} />
+            <Route path="/contact" element={<div className="min-h-screen bg-gradient-to-b from-rexcan-light-grey-secondary to-white"><div className="container mx-auto px-6 py-20"><h1 className="text-4xl md:text-5xl font-bold bg-text-gradient bg-clip-text text-transparent mb-4">Contact</h1><p className="text-rexcan-dark-blue-secondary text-lg">Coming soon...</p></div></div>} />
+            <Route path="/login" element={<div className="min-h-screen bg-gradient-to-br from-rexcan-dark-blue-primary to-rexcan-dark-blue-secondary"><div className="container mx-auto px-6 py-20"><h1 className="text-4xl md:text-5xl font-bold text-white mb-4">Login</h1><p className="text-rexcan-light-grey-secondary text-lg">Coming soon...</p></div></div>} />
+            <Route path="/demo" element={<div className="min-h-screen bg-gradient-to-br from-rexcan-dark-blue-primary to-rexcan-dark-blue-secondary"><div className="container mx-auto px-6 py-20"><h1 className="text-4xl md:text-5xl font-bold text-white mb-4">Demo</h1><p className="text-rexcan-light-grey-secondary text-lg">Coming soon...</p></div></div>} />
+          </Routes>
+        </main>
+        <Footer />
       </div>
-      <h1 className="text-4xl font-bold text-gray-800 mb-8">Vite + React</h1>
-      <div className="bg-white p-8 rounded-lg shadow-lg text-center">
-        <button 
-          onClick={() => setCount((count) => count + 1)}
-          className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg transition-colors mb-4"
-        >
-          count is {count}
-        </button>
-        <p className="text-gray-600 mb-4">
-          Edit <code className="bg-gray-100 px-2 py-1 rounded text-sm">src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="mt-8 text-gray-500 text-sm">
-        Click on the Vite and React logos to learn more
-      </p>
-    </div>
-  )
+    </Router>
+  );
 }
 
-export default App
+export default App;
