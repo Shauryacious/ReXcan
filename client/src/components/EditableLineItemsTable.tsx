@@ -68,7 +68,12 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
 
   const formatCurrency = (amount: number | null | undefined): string => {
     if (amount === null || amount === undefined) return 'N/A';
-    const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : currency || '$';
+    const currencySymbol = 
+      currency === 'USD' ? '$' : 
+      currency === 'EUR' ? '€' : 
+      currency === 'GBP' ? '£' : 
+      currency === 'INR' ? '₹' : 
+      currency || '$';
     return `${currencySymbol}${amount.toFixed(2)}`;
   };
 
