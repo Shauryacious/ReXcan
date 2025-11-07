@@ -123,25 +123,30 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-6 py-8">
-        <div className="max-w-6xl mx-auto">
-          {/* Header */}
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header - Material Design 3 Style */}
           <div className="mb-8">
-            <h1 className="text-3xl font-normal text-gray-900 mb-2">
-              Document Upload
+            <h1 className="text-4xl font-normal text-gray-900 mb-3 tracking-tight">
+              Document Processing
             </h1>
-            <p className="text-gray-600 text-base">
-              Upload invoices, receipts, and documents for processing
+            <p className="text-base text-gray-600 leading-relaxed">
+              Upload invoices, receipts, and documents for intelligent extraction and processing
             </p>
           </div>
 
-          {/* Upload Section */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-medium text-gray-900">
-                Upload Document{uploadMode === 'batch' ? 's' : ''}
-              </h2>
-              <div className="flex items-center space-x-2">
+          {/* Upload Section - Material Design 3 Card */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-6 sm:p-8 mb-6 transition-shadow hover:shadow-md">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-xl font-normal text-gray-900 mb-1">
+                  Upload Document{uploadMode === 'batch' ? 's' : ''}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  Choose single or batch upload mode
+                </p>
+              </div>
+              <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl">
                 <button
                   type="button"
                   onClick={() => {
@@ -150,10 +155,10 @@ const Dashboard = () => {
                     setUploadSuccess(null);
                     setBatchUploadResult(null);
                   }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                     uploadMode === 'single'
-                      ? 'bg-[#00FFD8] text-gray-900'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
                   }`}
                   disabled={isUploading}
                 >
@@ -167,10 +172,10 @@ const Dashboard = () => {
                     setUploadSuccess(null);
                     setBatchUploadResult(null);
                   }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                     uploadMode === 'batch'
-                      ? 'bg-[#00FFD8] text-gray-900'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
                   }`}
                   disabled={isUploading}
                 >
@@ -179,32 +184,34 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Model Selection Card */}
-            <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            {/* Model Selection Card - Material Design 3 */}
+            <div className="mb-6 p-5 bg-gray-50/50 rounded-xl border border-gray-200/60">
               <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-2">
-                  <svg
-                    className="w-4 h-4 text-gray-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                    />
-                  </svg>
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-blue-50 rounded-lg">
+                    <svg
+                      className="w-4 h-4 text-blue-600"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                      />
+                    </svg>
+                  </div>
                   <label
                     htmlFor="model-select"
-                    className="text-sm font-medium text-gray-700"
+                    className="text-sm font-medium text-gray-900"
                   >
-                    Select AI Model
+                    AI Model
                   </label>
                 </div>
                 {MODEL_OPTIONS.find((opt) => opt.value === selectedModel)?.recommended && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                     Recommended
                   </span>
                 )}
@@ -215,7 +222,7 @@ const Dashboard = () => {
                   id="model-select"
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value as AIModel)}
-                  className="w-full px-4 py-3 pr-10 border-2 border-rexcan-dark-blue-secondary/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#00FFD8] focus:border-[#00FFD8] bg-white text-rexcan-dark-blue-primary font-medium transition-all duration-200 hover:border-rexcan-dark-blue-secondary/40 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900 font-medium transition-all duration-200 hover:border-gray-400 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   disabled={isUploading}
                 >
                   {MODEL_OPTIONS.map((option) => (
@@ -226,7 +233,7 @@ const Dashboard = () => {
                 </select>
                 <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
                   <svg
-                    className="w-5 h-5 text-rexcan-dark-blue-secondary"
+                    className="w-5 h-5 text-gray-400"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -313,8 +320,8 @@ const Dashboard = () => {
             />
           </div>
 
-          {/* Documents List Section */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+          {/* Documents List Section - Material Design 3 Card */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-6 sm:p-8 mb-6 transition-shadow hover:shadow-md">
             <DocumentsList
               refreshTrigger={refreshTrigger}
               onDocumentSelect={handleDocumentSelect}

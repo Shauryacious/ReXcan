@@ -17,6 +17,10 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [exportingJSON, setExportingJSON] = useState(false);
   const [exportingCSV, setExportingCSV] = useState(false);
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [timeFrom, setTimeFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [timeTo, setTimeTo] = useState<string>('');
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 50,
@@ -83,6 +87,47 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
     });
   };
 
+  // Filter documents based on date range
+  const getFilteredDocuments = (): Document[] => {
+    if (!dateFrom && !dateTo) {
+      return documents;
+    }
+
+    return documents.filter((doc) => {
+      const docDate = new Date(doc.createdAt);
+      
+      // Build from date/time
+      let fromDate: Date | null = null;
+      if (dateFrom) {
+        const fromDateTime = timeFrom 
+          ? `${dateFrom}T${timeFrom}` 
+          : `${dateFrom}T00:00:00`;
+        fromDate = new Date(fromDateTime);
+      }
+      
+      // Build to date/time
+      let toDate: Date | null = null;
+      if (dateTo) {
+        const toDateTime = timeTo 
+          ? `${dateTo}T${timeTo}` 
+          : `${dateTo}T23:59:59`;
+        toDate = new Date(toDateTime);
+      }
+      
+      // Check if document is within range
+      if (fromDate && docDate < fromDate) {
+        return false;
+      }
+      if (toDate && docDate > toDate) {
+        return false;
+      }
+      
+      return true;
+    });
+  };
+
+  const filteredDocuments = getFilteredDocuments();
+
 
   const handleToggleSelect = (documentId: string, event: React.MouseEvent) => {
     event.stopPropagation(); // Prevent triggering document select
@@ -98,12 +143,28 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
   };
 
   const handleSelectAll = () => {
-    if (selectedDocuments.size === documents.length) {
-      // Deselect all
-      setSelectedDocuments(new Set());
+    const filtered = getFilteredDocuments();
+    const allFilteredSelected = filtered.length > 0 && 
+      filtered.every((doc) => doc.id && selectedDocuments.has(doc.id));
+    
+    if (allFilteredSelected) {
+      // Deselect all filtered documents
+      setSelectedDocuments((prev) => {
+        const newSet = new Set(prev);
+        filtered.forEach((doc) => {
+          if (doc.id) newSet.delete(doc.id);
+        });
+        return newSet;
+      });
     } else {
-      // Select all
-      setSelectedDocuments(new Set(documents.map((doc) => doc.id).filter(Boolean) as string[]));
+      // Select all filtered documents
+      setSelectedDocuments((prev) => {
+        const newSet = new Set(prev);
+        filtered.forEach((doc) => {
+          if (doc.id) newSet.add(doc.id);
+        });
+        return newSet;
+      });
     }
   };
 
@@ -117,7 +178,17 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
 
     try {
       setBulkDeleting(true);
-      const documentIds = Array.from(selectedDocuments);
+      // Only delete selected documents that are in the filtered list
+      const selectedIds = filteredDocuments
+        .filter((doc) => doc.id && selectedDocuments.has(doc.id))
+        .map((doc) => doc.id!);
+      
+      if (selectedIds.length === 0) {
+        setShowBulkDeleteConfirm(false);
+        return;
+      }
+      
+      const documentIds = selectedIds;
       
       // Delete all selected documents
       const deletePromises = documentIds.map((id) => documentAPI.deleteDocument(id));
@@ -167,8 +238,8 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
     try {
       setExportingJSON(true);
       
-      // Get all selected documents that are processed
-      const selectedDocs = documents.filter(
+      // Get all selected documents that are processed (from filtered documents)
+      const selectedDocs = filteredDocuments.filter(
         (doc) => doc.id && selectedDocuments.has(doc.id) && doc.status === 'processed' && doc.pythonJobId
       );
 
@@ -264,8 +335,8 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
     try {
       setExportingCSV(true);
       
-      // Get all selected documents that are processed
-      const selectedDocs = documents.filter(
+      // Get all selected documents that are processed (from filtered documents)
+      const selectedDocs = filteredDocuments.filter(
         (doc) => doc.id && selectedDocuments.has(doc.id) && doc.status === 'processed' && doc.pythonJobId
       );
 
@@ -477,27 +548,93 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
     );
   }
 
-  const selectedCount = selectedDocuments.size;
-  const allSelected = documents.length > 0 && selectedCount === documents.length;
-  const someSelected = selectedCount > 0 && selectedCount < documents.length;
+  const selectedCount = filteredDocuments.filter((doc) => 
+    doc.id && selectedDocuments.has(doc.id)
+  ).length;
+  const allSelected = filteredDocuments.length > 0 && selectedCount === filteredDocuments.length;
+  const someSelected = selectedCount > 0 && selectedCount < filteredDocuments.length;
 
   return (
     <div className="space-y-6">
-      {/* Header Section - Material Design Style */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-normal text-gray-900 tracking-tight">
-            Documents
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            {pagination.total} {pagination.total === 1 ? 'document' : 'documents'}
-          </p>
+      {/* Header Section - Material Design 3 */}
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-normal text-gray-900 tracking-tight mb-1">
+              Documents
+            </h2>
+            <p className="text-sm text-gray-500">
+              {filteredDocuments.length} of {pagination.total} {pagination.total === 1 ? 'document' : 'documents'}
+              {filteredDocuments.length !== pagination.total && ' (filtered)'}
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
+        
+        {/* Date Range Filter - Material Design 3 */}
+        <div className="flex flex-col sm:flex-row gap-4 p-5 bg-gray-50/50 rounded-xl border border-gray-200/60">
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-700 mb-2">
+              From Date & Time
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="flex-1 px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm transition-all hover:border-gray-400"
+              />
+              <input
+                type="time"
+                value={timeFrom}
+                onChange={(e) => setTimeFrom(e.target.value)}
+                className="px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm transition-all hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!dateFrom}
+              />
+            </div>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-700 mb-2">
+              To Date & Time
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="flex-1 px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm transition-all hover:border-gray-400"
+              />
+              <input
+                type="time"
+                value={timeTo}
+                onChange={(e) => setTimeTo(e.target.value)}
+                className="px-3 py-2.5 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm transition-all hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!dateTo}
+              />
+            </div>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => {
+                setDateFrom('');
+                setTimeFrom('');
+                setDateTo('');
+                setTimeTo('');
+                setSelectedDocuments(new Set());
+              }}
+              className="px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-xl transition-all shadow-sm hover:shadow"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      {/* Action Panel - Material Design 3 */}
+      <div className="flex flex-wrap items-center gap-3 pb-4 border-b border-gray-200">
+          <div className="flex items-center gap-2.5">
             {selectedCount > 0 && (
               <>
-                <span className="text-sm font-medium text-gray-700 px-3 py-1.5 bg-gray-100 rounded-full">
+                <span className="text-sm font-medium text-gray-700 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full border border-blue-200">
                   {selectedCount} {selectedCount === 1 ? 'selected' : 'selected'}
                 </span>
                 
@@ -505,7 +642,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
                 <button
                   onClick={handleBulkExportJSON}
                   disabled={exportingJSON || exportingCSV || selectedCount === 0}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
                   title="Export selected documents as JSON"
                 >
                   {exportingJSON ? (
@@ -524,7 +661,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
                 <button
                   onClick={handleBulkExportCSV}
                   disabled={exportingJSON || exportingCSV || selectedCount === 0}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
                   title="Export selected documents as CSV"
                 >
                   {exportingCSV ? (
@@ -574,7 +711,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
               <button
                 onClick={handleBulkDelete}
                 disabled={bulkDeleting || selectedCount === 0}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
                 title={selectedCount === 0 ? 'Select documents to delete' : `Delete ${selectedCount} selected document(s)`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -584,20 +721,19 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
               </button>
             )}
           </div>
-        <button
-          onClick={() => void fetchDocuments()}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
+          <button
+            onClick={() => void fetchDocuments()}
+            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors ml-auto"
             title="Refresh"
-        >
+          >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-        </button>
+          </button>
         </div>
-      </div>
 
       {/* Select All Button - Material Design Style */}
-      {documents.length > 0 && (
+      {filteredDocuments.length > 0 && (
         <div className="flex items-center px-1 py-2 border-b border-gray-200">
           <button
             onClick={handleSelectAll}
@@ -622,7 +758,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
       )}
 
       <div className="space-y-2">
-        {documents.map((document, index) => {
+        {filteredDocuments.map((document, index) => {
           const isSelected = document.id && selectedDocuments.has(document.id);
           return (
           <div

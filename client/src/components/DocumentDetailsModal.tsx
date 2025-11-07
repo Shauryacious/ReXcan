@@ -487,11 +487,11 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadeIn p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-2xl max-w-7xl w-full mx-4 max-h-[95vh] overflow-hidden flex flex-col animate-slideUp"
+        className="bg-white rounded-3xl shadow-2xl max-w-7xl w-full max-h-[95vh] overflow-hidden flex flex-col animate-slideUp"
         onClick={(e) => e.stopPropagation()}
         style={{
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08)'
@@ -651,10 +651,10 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
 
         {/* Two-column layout: PDF/Image on left, Data on right */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Side: PDF/Image Preview */}
-          <div className="w-1/2 border-r border-gray-200 bg-gray-50 flex flex-col">
-            <div className="px-6 py-3 border-b border-gray-200 bg-white">
-              <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+          {/* Left Side: PDF/Image Preview - Material Design 3 */}
+          <div className="w-1/2 border-r border-gray-200/60 bg-gray-50/50 flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200/60 bg-white">
+              <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wider">
                 Document Preview
               </h3>
             </div>
@@ -769,9 +769,9 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
             </div>
           </div>
 
-          {/* Right Side: Extracted Data */}
+          {/* Right Side: Extracted Data - Material Design 3 */}
           <div className="w-1/2 overflow-y-auto bg-white">
-            <div className="p-6">
+            <div className="p-6 sm:p-8">
           {/* Document Info */}
           <div className="mb-6">
             <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-4">
