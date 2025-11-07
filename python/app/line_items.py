@@ -141,10 +141,44 @@ def extract_line_items(blocks: List[OCRBlock],
         elif len(numeric_values) == 1:
             total = numeric_values[0]
         
-        # Only add if we have at least description or total
-        if description or total:
+        # Filter out invalid line items
+        # Skip if description is empty or just whitespace/hyphens
+        if not description or not description.strip() or description.strip() in ['-', '--', '---', 'N/A', 'n/a']:
+            continue
+        
+        # Skip common non-item phrases (case-insensitive)
+        description_lower = description.lower().strip()
+        non_item_phrases = [
+            'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
+            'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
+            'thanks for your business', 'thank you for your business', 'thanks foryour business',
+            'payment terms', 'to be received', 'within', 'days',
+            'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
+            'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
+            'your name', 'sincerely', 'regards', 'best regards',
+            'look forward', 'doing business', 'due course', 'custom',
+            'find below', 'make payment', 'contact', 'hesitate',
+            'for your business', 'for business', 'your business'
+        ]
+        
+        # Check if description matches any non-item phrase
+        if any(phrase in description_lower for phrase in non_item_phrases):
+            continue
+        
+        # Skip if description is too short and has no meaningful data
+        if len(description.strip()) < 3 and not quantity and not unit_price and not total:
+            continue
+        
+        # Skip if it's clearly not a line item (no numbers at all and description is generic)
+        if not quantity and not unit_price and not total:
+            # If description doesn't look like an item description, skip it
+            if len(description.strip()) < 5 or description_lower in ['sales', 'tax', 'subtotal', 'total']:
+                continue
+        
+        # Only add if we have at least description and some meaningful data
+        if description and (quantity or unit_price or total):
             line_items.append(LineItem(
-                description=description or "",
+                description=description.strip(),
                 quantity=quantity,
                 unit_price=unit_price,
                 total=total

@@ -128,6 +128,8 @@ class LLMRouter:
             field_instructions.append("invoice_date: Look for 'Invoice Date', 'Date of Issue', 'Date' followed by a date in MM/DD/YYYY, YYYY-MM-DD, or similar format.")
         if "vendor_name" in fields:
             field_instructions.append("vendor_name: Look for company name, usually in top-left area. May have suffixes like 'Ltd', 'Inc', 'LLC'.")
+        if "amount_tax" in fields:
+            field_instructions.append("amount_tax: Look for 'Tax', 'Tax (X%)', 'Sales Tax', 'GST', 'VAT' followed by a currency amount. Usually appears after 'Subtotal' and before 'Total'. Extract the numeric amount (e.g., if you see 'Tax (13%): $456.30', extract 456.30).")
         
         instructions_text = "\n".join(field_instructions)
         
@@ -145,6 +147,7 @@ Instructions:
 IMPORTANT:
 - invoice_id: Often appears as "Invoice no: 40378170" or similar. Extract the number/code after the label.
 - total_amount: Look for the largest amount near "Total" label, usually in bottom area. Ignore small numbers that might be invoice IDs.
+- amount_tax: Look for tax amount near "Tax", "Tax (X%)", "Sales Tax" labels. Usually appears between Subtotal and Total. Extract only the numeric amount (e.g., from "Tax (13%): $456.30" extract 456.30).
 - invoice_date: Convert to YYYY-MM-DD format.
 - vendor_name: Extract company name, not addresses or contact info.
 
@@ -155,6 +158,7 @@ Return only valid JSON matching this schema:
   "invoice_date": "YYYY-MM-DD or null",
   "due_date": "YYYY-MM-DD or null",
   "total_amount": float or null,
+  "amount_tax": float or null,
   "currency": "ISO4217 code or null",
   "reasons": {{ "field_name": "1-line reason" }}
 }}
@@ -520,6 +524,7 @@ Instructions:
 IMPORTANT:
 - invoice_id: Often appears as "Invoice no: 40378170" or similar. Extract the number/code after the label. Look carefully in the top area.
 - total_amount: Look for the largest amount near "Total" label, usually in bottom area. Ignore small numbers that might be invoice IDs.
+- amount_tax: Look for tax amount near "Tax", "Tax (X%)", "Sales Tax" labels. Usually appears between Subtotal and Total. Extract only the numeric amount (e.g., from "Tax (13%): $456.30" extract 456.30).
 - invoice_date: Convert to YYYY-MM-DD format.
 - vendor_name: Extract company name, not addresses or contact info.
 
@@ -530,6 +535,7 @@ Return only valid JSON matching this schema:
   "invoice_date": "YYYY-MM-DD or null",
   "due_date": "YYYY-MM-DD or null",
   "total_amount": float or null,
+  "amount_tax": float or null,
   "currency": "ISO4217 code or null",
   "reasons": {{ "field_name": "1-line reason" }}
 }}

@@ -226,6 +226,36 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
     setUnsavedChanges(false);
     pendingChangesRef.current = {};
     shouldAutoRefreshRef.current = false;
+    
+    // Recalculate totals from line items when document loads
+    if (doc?.extractedData?.lineItems && doc.extractedData.lineItems.length > 0) {
+      const lineItems: LineItem[] = doc.extractedData.lineItems.map(item => ({
+        description: item.description || '',
+        quantity: item.quantity ?? null,
+        unit_price: item.unitPrice ?? null,
+        total: (item as any).total ?? item.amount ?? null,
+      }));
+      
+      const subtotal = lineItems.reduce((sum, item) => {
+        const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
+        return sum + (itemTotal || 0);
+      }, 0);
+      
+      const taxAmount = doc.extractedData.amountTax || 0;
+      const calculatedTotal = subtotal + taxAmount;
+      
+      // Update totals if they don't match
+      if (doc.extractedData.amountSubtotal !== subtotal || doc.extractedData.totalAmount !== calculatedTotal) {
+        setDocumentData({
+          ...doc,
+          extractedData: {
+            ...doc.extractedData,
+            amountSubtotal: subtotal,
+            totalAmount: calculatedTotal,
+          },
+        });
+      }
+    }
   }, [doc]);
   
   // Auto-refresh after updates
@@ -383,9 +413,17 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
 
   // Calculate totals from line items
   const calculateTotalsFromLineItems = useCallback((lineItems: LineItem[]) => {
+    // Calculate subtotal from all line items, using total if available, otherwise calculate from quantity * unit_price
     const subtotal = lineItems.reduce((sum, item) => {
-      const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
-      return sum + (itemTotal || 0);
+      // Use item.total if available, otherwise calculate from quantity * unit_price
+      let itemTotal = 0;
+      if (item.total !== null && item.total !== undefined) {
+        itemTotal = item.total;
+      } else if (item.quantity !== null && item.quantity !== undefined && 
+                 item.unit_price !== null && item.unit_price !== undefined) {
+        itemTotal = item.quantity * item.unit_price;
+      }
+      return sum + itemTotal;
     }, 0);
     
     const taxAmount = documentData?.extractedData?.amountTax || 0;
@@ -434,10 +472,32 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
   const handleFieldsUpdate = async (extractedData: Partial<ExtractedData>) => {
     if (!documentData?.id) return;
 
+    // If tax amount changes, recalculate total from line items
+    let updatedExtractedData = { ...extractedData };
+    if (extractedData.amountTax !== undefined && documentData.extractedData?.lineItems) {
+      const lineItems: LineItem[] = documentData.extractedData.lineItems.map(item => ({
+        description: item.description || '',
+        quantity: item.quantity ?? null,
+        unit_price: item.unitPrice ?? null,
+        total: (item as any).total ?? item.amount ?? null,
+      }));
+      
+      const subtotal = lineItems.reduce((sum, item) => {
+        const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
+        return sum + (itemTotal || 0);
+      }, 0);
+      
+      const taxAmount = extractedData.amountTax || 0;
+      const calculatedTotal = subtotal + taxAmount;
+      
+      updatedExtractedData.amountSubtotal = subtotal;
+      updatedExtractedData.totalAmount = calculatedTotal;
+    }
+
     // Store changes for auto-save
     pendingChangesRef.current.fields = {
       ...pendingChangesRef.current.fields,
-      ...extractedData,
+      ...updatedExtractedData,
     };
     setUnsavedChanges(true);
     
@@ -447,7 +507,7 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
         ...documentData,
         extractedData: {
           ...documentData.extractedData,
-          ...extractedData,
+          ...updatedExtractedData,
         },
       });
     }

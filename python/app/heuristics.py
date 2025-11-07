@@ -604,7 +604,7 @@ def extract_currency(blocks: List[OCRBlock], total_amount: Optional[float] = Non
 # Tax labels
 TAX_LABELS = [
     "tax", "gst", "vat", "sales tax", "total tax",
-    "tax amount", "tax total", "taxes",
+    "tax amount", "tax total", "taxes", "tax (", "tax:",
     "impuesto", "iva",  # Spanish
     "tva",  # French
 ]
@@ -644,42 +644,127 @@ def extract_tax_amount(blocks: List[OCRBlock], total_amount: Optional[float] = N
     
     # Strategy 1: Near tax label
     for lb in label_blocks:
-        # Check same block first
+        # Check same block first - look for amount patterns more thoroughly
         lb_norm = block_norms.get(id(lb), normalize_text(lb.text))
-        same_block_match = AMOUNT_RELAXED.search(lb_norm)
+        lb_text = lb.text  # Keep original for better matching
+        
+        # Try to find amount in same block - check for patterns like "Tax (13%): $456.30" or "Tax: 456.30"
+        # Look for amount patterns with currency symbols first
+        same_block_match = AMOUNT_STRICT.search(lb_norm)
+        if not same_block_match:
+            same_block_match = AMOUNT_RELAXED.search(lb_norm)
+        
+        # Also try to extract from patterns like "Tax (13%): $456.30" or "Tax: $456.30"
+        if not same_block_match:
+            # Look for colon or parenthesis followed by amount
+            colon_pattern = re.search(r'[:\(]\s*[^\d]*(\d{1,3}(?:[,\s]\d{3})*(?:[.,]\d{1,2})?)', lb_text)
+            if colon_pattern:
+                raw = colon_pattern.group(1).strip()
+                parsed = parse_amount_str(raw)
+                if parsed is not None and parsed > 0:
+                    candidates.append(('label', parsed, lb, 0.88))
+                    chosen_block = lb
+                    break
+        
         if same_block_match:
             raw = same_block_match.group(1).strip() if same_block_match.groups() else same_block_match.group(0).strip()
-            parsed = parse_amount_str(raw)
+            # Remove currency symbols and clean up, but preserve decimal separators
+            raw_clean = re.sub(r'[^\d.,\-\+]', '', raw)
+            # Handle comma as thousands separator
+            if ',' in raw_clean and '.' in raw_clean:
+                # Format like 1,234.56
+                raw_clean = raw_clean.replace(',', '')
+            elif ',' in raw_clean:
+                # Could be European format (1,23) or thousands (1,234)
+                # If only one comma and 2 digits after, treat as decimal
+                parts = raw_clean.split(',')
+                if len(parts) == 2 and len(parts[1]) <= 2:
+                    raw_clean = raw_clean.replace(',', '.')
+                else:
+                    raw_clean = raw_clean.replace(',', '')
+            parsed = parse_amount_str(raw_clean)
             if parsed is not None and parsed > 0:
                 candidates.append(('label', parsed, lb, 0.90))
                 chosen_block = lb
                 break
         
-        # Find nearby block
-        nb = find_candidate_near(lb, blocks, prefer_right=True, max_px=500)
+        # Find nearby block - increase search radius and check below as well
+        # Try right first
+        nb = find_candidate_near(lb, blocks, prefer_right=True, max_px=600)
+        if not nb:
+            # Try below
+            nb = find_candidate_near(lb, blocks, prefer_right=False, max_px=600)
+        
         if nb:
             s = block_norms.get(id(nb), normalize_text(nb.text))
-            m = AMOUNT_RELAXED.search(s)
+            # Try strict first, then relaxed
+            m = AMOUNT_STRICT.search(s)
+            if not m:
+                m = AMOUNT_RELAXED.search(s)
             if m:
                 raw = m.group(1).strip() if m.groups() else m.group(0).strip()
+                # Remove currency symbols and clean up
+                raw = re.sub(r'[^\d.,\-\+]', '', raw)
                 parsed = parse_amount_str(raw)
                 if parsed is not None and parsed > 0:
                     candidates.append(('label', parsed, nb, 0.85))
                     chosen_block = nb
                     break
     
-    # Strategy 2: Global scan for tax-like amounts (smaller than total, positive)
+    # Strategy 2: Look for amounts near subtotal (tax is often right after subtotal)
+    if not candidates:
+        subtotal_blocks = find_blocks_with_label(blocks, SUBTOTAL_LABELS)
+        for stb in subtotal_blocks:
+            # Find block after subtotal (tax usually comes after)
+            nb = find_candidate_near(stb, blocks, prefer_right=True, max_px=400)
+            if nb:
+                s = block_norms.get(id(nb), normalize_text(nb.text))
+                m = AMOUNT_STRICT.search(s)
+                if not m:
+                    m = AMOUNT_RELAXED.search(s)
+                if m:
+                    raw = m.group(1).strip() if m.groups() else m.group(0).strip()
+                    raw = re.sub(r'[^\d.,\-\+]', '', raw)
+                    parsed = parse_amount_str(raw)
+                    if parsed is not None and parsed > 0:
+                        # Validate it's reasonable (tax is usually 5-50% of subtotal)
+                        if total_amount:
+                            tax_ratio = parsed / total_amount if total_amount > 0 else 0
+                            if 0.01 <= tax_ratio <= 0.50:
+                                candidates.append(('subtotal_near', parsed, nb, 0.75))
+                                if not chosen_block:
+                                    chosen_block = nb
+                        else:
+                            candidates.append(('subtotal_near', parsed, nb, 0.70))
+                            if not chosen_block:
+                                chosen_block = nb
+    
+    # Strategy 3: Global scan for tax-like amounts (smaller than total, positive)
     if not candidates and total_amount:
         for b in blocks:
             s = block_norms.get(id(b), normalize_text(b.text))
-            for m in AMOUNT_RELAXED.finditer(s):
+            # Try strict first, then relaxed
+            for m in AMOUNT_STRICT.finditer(s):
                 raw = m.group(1).strip() if m.groups() else m.group(0).strip()
+                raw = re.sub(r'[^\d.,\-\+]', '', raw)
                 parsed = parse_amount_str(raw)
                 if parsed is not None and parsed > 0 and parsed < total_amount:
                     # Tax is usually 5-30% of total
                     tax_ratio = parsed / total_amount if total_amount > 0 else 0
                     if 0.01 <= tax_ratio <= 0.50:  # Reasonable tax range
                         candidates.append(('global', parsed, b, 0.60))
+                        if not chosen_block:
+                            chosen_block = b
+            # Also try relaxed pattern
+            for m in AMOUNT_RELAXED.finditer(s):
+                raw = m.group(1).strip() if m.groups() else m.group(0).strip()
+                raw = re.sub(r'[^\d.,\-\+]', '', raw)
+                parsed = parse_amount_str(raw)
+                if parsed is not None and parsed > 0 and parsed < total_amount:
+                    # Tax is usually 5-30% of total
+                    tax_ratio = parsed / total_amount if total_amount > 0 else 0
+                    if 0.01 <= tax_ratio <= 0.50:  # Reasonable tax range
+                        candidates.append(('global', parsed, b, 0.55))
                         if not chosen_block:
                             chosen_block = b
     

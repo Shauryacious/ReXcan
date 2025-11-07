@@ -356,7 +356,51 @@ export const exportJSON = asyncHandler(
 
         // Merge line items from database (they are the source of truth after user edits)
         if (document.extractedData.lineItems && document.extractedData.lineItems.length > 0) {
-          exportData.line_items = document.extractedData.lineItems.map((item) => {
+          exportData.line_items = document.extractedData.lineItems
+            .filter((item) => {
+              // Filter out invalid line items
+              const description = (item.description || '').trim();
+              
+              // Skip empty or invalid descriptions
+              if (!description || description in ['-', '--', '---', 'N/A', 'n/a', '']) {
+                return false;
+              }
+              
+              // Skip common non-item phrases
+              const descriptionLower = description.toLowerCase();
+              const nonItemPhrases = [
+                'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
+                'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
+                'thanks for your business', 'thank you for your business', 'thanks foryour business',
+                'payment terms', 'to be received', 'within', 'days',
+                'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
+                'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
+                'your name', 'sincerely', 'regards', 'best regards',
+                'look forward', 'doing business', 'due course', 'custom',
+                'find below', 'make payment', 'contact', 'hesitate',
+                'for your business', 'for business', 'your business'
+              ];
+              
+              if (nonItemPhrases.some(phrase => descriptionLower.includes(phrase))) {
+                return false;
+              }
+              
+              // Skip if description is too short and has no meaningful data
+              if (description.length < 3 && !item.quantity && !item.unitPrice && !item.total) {
+                return false;
+              }
+              
+              // Skip if it's clearly not a line item (no numbers and generic description)
+              if (!item.quantity && !item.unitPrice && !item.total) {
+                if (description.length < 5 || ['sales', 'tax', 'subtotal', 'total'].includes(descriptionLower)) {
+                  return false;
+                }
+              }
+              
+              // Only include if we have at least some meaningful data
+              return !!(item.quantity || item.unitPrice || item.total);
+            })
+            .map((item) => {
             const normalizedItem: {
               description: string;
               quantity?: number;

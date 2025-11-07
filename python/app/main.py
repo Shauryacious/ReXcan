@@ -461,6 +461,15 @@ async def process_invoice(job_id: str = Query(...)):
         if vendor_name_should:
             fields_to_extract.append("vendor_name")
             llm_reasons["vendor_name"] = vendor_name_reason
+        
+        # Check tax amount - include in LLM if missing or low confidence
+        tax_amount_should, tax_amount_reason = should_use_llm(
+            field_confidences.get("amount_tax", 0), "amount_tax", False, timings,
+            field_missing=(tax_amount_result[0] is None)
+        )
+        if tax_amount_should:
+            fields_to_extract.append("amount_tax")
+            llm_reasons["amount_tax"] = tax_amount_reason
     
     # Batch all fields into single LLM call (with backpressure)
     if fields_to_extract:
@@ -532,6 +541,18 @@ async def process_invoice(job_id: str = Query(...)):
                         vendor_name_result = (llm_result["vendor_name"], 0.75, "LLM extraction")
                         field_confidences["vendor_name"] = min(0.85, field_confidences.get("vendor_name", 0) + 0.2)
                         field_sources["vendor_name"] = "llm"
+                    if "amount_tax" in llm_result and llm_result.get("amount_tax"):
+                        try:
+                            llm_tax = llm_result["amount_tax"]
+                            # Convert to float if it's a string
+                            if isinstance(llm_tax, str):
+                                llm_tax = float(llm_tax.replace(',', '').replace('$', '').strip())
+                            tax_amount_result = (llm_tax, 0.75, "LLM extraction")
+                            field_confidences["amount_tax"] = min(0.85, field_confidences.get("amount_tax", 0) + 0.2)
+                            field_sources["amount_tax"] = "llm"
+                        except (ValueError, TypeError) as e:
+                            print(f"  ⚠️  Invalid LLM tax amount: {llm_result.get('amount_tax')}, error: {e}")
+                            # Keep heuristic result
                 
                     # Update reasons from LLM (filter out None values)
                     if "reasons" in llm_result:
@@ -949,23 +970,66 @@ def get_clean_invoice_data(result: Dict[str, Any]) -> Dict[str, Any]:
         "currency": result.get("currency"),
     }
     
-    # Include line items if present, with normalization
+    # Include line items if present, with normalization and filtering
     if result.get("line_items"):
         normalized_line_items = []
         for item in result.get("line_items", []):
             normalized_item = dict(item)  # Create a copy
             
-            # Normalize: if unit_price exists but quantity is null/undefined, default quantity to 1
-            if (normalized_item.get("unit_price") is not None and 
-                normalized_item.get("quantity") is None):
-                normalized_item["quantity"] = 1
+            # Get description and check if it should be filtered
+            description = normalized_item.get("description", "").strip() if normalized_item.get("description") else ""
             
-            # Calculate total if quantity and unit_price exist but total is missing
+            # Filter out empty or invalid descriptions
+            if not description or description in ['-', '--', '---', 'N/A', 'n/a', '']:
+                continue
+            
+            # Filter out common non-item phrases (case-insensitive)
+            description_lower = description.lower()
+            non_item_phrases = [
+                'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
+                'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
+                'thanks for your business', 'thank you for your business', 'thanks foryour business',
+                'payment terms', 'to be received', 'within', 'days',
+                'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
+                'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
+                'your name', 'sincerely', 'regards', 'best regards',
+                'look forward', 'doing business', 'due course', 'custom',
+                'find below', 'make payment', 'contact', 'hesitate',
+                'for your business', 'for business', 'your business'
+            ]
+            
+            # Check if description matches any non-item phrase
+            if any(phrase in description_lower for phrase in non_item_phrases):
+                continue
+            
+            # Skip if description is too short and has no meaningful data
             quantity = normalized_item.get("quantity")
             unit_price = normalized_item.get("unit_price")
-            if (quantity is not None and unit_price is not None and 
-                normalized_item.get("total") is None):
+            total = normalized_item.get("total")
+            
+            if len(description) < 3 and not quantity and not unit_price and not total:
+                continue
+            
+            # Skip if it's clearly not a line item (no numbers and generic description)
+            if not quantity and not unit_price and not total:
+                if len(description) < 5 or description_lower in ['sales', 'tax', 'subtotal', 'total']:
+                    continue
+            
+            # Only include if we have at least some meaningful data
+            if not (quantity or unit_price or total):
+                continue
+            
+            # Normalize: if unit_price exists but quantity is null/undefined, default quantity to 1
+            if (unit_price is not None and quantity is None):
+                normalized_item["quantity"] = 1
+                quantity = 1
+            
+            # Calculate total if quantity and unit_price exist but total is missing
+            if (quantity is not None and unit_price is not None and total is None):
                 normalized_item["total"] = quantity * unit_price
+            
+            # Update description to cleaned version
+            normalized_item["description"] = description
             
             normalized_line_items.append(normalized_item)
         

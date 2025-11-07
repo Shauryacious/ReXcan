@@ -151,22 +151,25 @@ export const updateDocument = asyncHandler(
         total: item.total ?? undefined, // Use 'total' not 'amount' to match schema
       }));
       
-      // Recalculate subtotal and total from line items
+      // Recalculate subtotal and total from line items (always recalculate to ensure accuracy)
       const lineItemsSubtotal = lineItems.reduce((sum, item) => {
-        const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
-        return sum + (itemTotal || 0);
+        // Use item.total if available, otherwise calculate from quantity * unit_price
+        let itemTotal = 0;
+        if (item.total !== null && item.total !== undefined) {
+          itemTotal = item.total;
+        } else if (item.quantity !== null && item.quantity !== undefined && 
+                   item.unit_price !== null && item.unit_price !== undefined) {
+          itemTotal = item.quantity * item.unit_price;
+        }
+        return sum + itemTotal;
       }, 0);
       
-      // Update subtotal if not explicitly provided
-      if (updatedExtractedData.amountSubtotal === undefined) {
-        updatedExtractedData.amountSubtotal = lineItemsSubtotal;
-      }
+      // Always update subtotal from line items
+      updatedExtractedData.amountSubtotal = lineItemsSubtotal;
       
-      // Update total amount if not explicitly provided (subtotal + tax)
-      if (updatedExtractedData.totalAmount === undefined) {
-        const taxAmount = updatedExtractedData.amountTax || 0;
-        updatedExtractedData.totalAmount = lineItemsSubtotal + taxAmount;
-      }
+      // Always recalculate total amount (subtotal + tax)
+      const taxAmount = updatedExtractedData.amountTax || currentExtractedData.amountTax || 0;
+      updatedExtractedData.totalAmount = lineItemsSubtotal + taxAmount;
     }
 
     // If other extracted data fields are provided, merge them

@@ -71,12 +71,56 @@ export const documentWorker = new Worker<DocumentJobData>(
         amountSubtotal: invoiceExtract.amount_subtotal || undefined,
         amountTax: invoiceExtract.amount_tax || undefined,
         currency: invoiceExtract.currency || undefined,
-        lineItems: invoiceExtract.line_items?.map((item) => ({
-          description: item.description,
-          quantity: item.quantity || undefined,
-          unitPrice: item.unit_price || undefined,
-          total: item.total || undefined,
-        })),
+        lineItems: invoiceExtract.line_items
+          ?.filter((item) => {
+            // Filter out invalid line items
+            const description = (item.description || '').trim();
+            
+            // Skip empty or invalid descriptions
+            if (!description || description in ['-', '--', '---', 'N/A', 'n/a', '']) {
+              return false;
+            }
+            
+            // Skip common non-item phrases
+            const descriptionLower = description.toLowerCase();
+            const nonItemPhrases = [
+              'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
+              'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
+              'thanks for your business', 'thank you for your business', 'thanks foryour business',
+              'payment terms', 'to be received', 'within', 'days',
+              'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
+              'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
+              'your name', 'sincerely', 'regards', 'best regards',
+              'look forward', 'doing business', 'due course', 'custom',
+              'find below', 'make payment', 'contact', 'hesitate',
+              'for your business', 'for business', 'your business'
+            ];
+            
+            if (nonItemPhrases.some(phrase => descriptionLower.includes(phrase))) {
+              return false;
+            }
+            
+            // Skip if description is too short and has no meaningful data
+            if (description.length < 3 && !item.quantity && !item.unit_price && !item.total) {
+              return false;
+            }
+            
+            // Skip if it's clearly not a line item (no numbers and generic description)
+            if (!item.quantity && !item.unit_price && !item.total) {
+              if (description.length < 5 || ['sales', 'tax', 'subtotal', 'total'].includes(descriptionLower)) {
+                return false;
+              }
+            }
+            
+            // Only include if we have at least some meaningful data
+            return !!(item.quantity || item.unit_price || item.total);
+          })
+          ?.map((item) => ({
+            description: (item.description || '').trim(),
+            quantity: item.quantity || undefined,
+            unitPrice: item.unit_price || undefined,
+            total: item.total || undefined,
+          })),
         // Python service specific fields
         fieldConfidences: invoiceExtract.field_confidences,
         fieldReasons: invoiceExtract.field_reasons,
@@ -92,7 +136,7 @@ export const documentWorker = new Worker<DocumentJobData>(
         needsHumanReview: invoiceExtract.needs_human_review,
         llmCallReason: invoiceExtract.llm_call_reason,
         ocrBlocks: invoiceExtract.raw_ocr_blocks,
-        rawExtraction: invoiceExtract, // Store full response
+        rawExtraction: invoiceExtract as Record<string, unknown>, // Store full response
       };
 
       // Update document with extracted data and Python job ID
