@@ -21,20 +21,30 @@ const EditableFieldsForm = ({ extractedData, onUpdate }: EditableFieldsFormProps
   }, [extractedData]);
 
   const handleFieldChange = (field: keyof ExtractedData, value: string | number | undefined) => {
-    setFormData({
+    const updatedData = {
       ...formData,
       [field]: value === '' ? undefined : value,
-    });
+    };
+    setFormData(updatedData);
+    // Call onUpdate immediately for auto-save tracking
+    if (isEditing) {
+      onUpdate(updatedData);
+    }
   };
 
   const handleTaxInfoChange = (field: 'taxRate' | 'taxAmount', value: number | undefined) => {
-    setFormData({
+    const updatedData = {
       ...formData,
       taxInformation: {
         ...formData.taxInformation,
         [field]: value === undefined || value === null ? undefined : value,
       },
-    });
+    };
+    setFormData(updatedData);
+    // Call onUpdate immediately for auto-save tracking
+    if (isEditing) {
+      onUpdate(updatedData);
+    }
   };
 
   const handleSave = () => {

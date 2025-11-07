@@ -8,7 +8,7 @@ import csv
 import io
 
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -784,18 +784,44 @@ async def get_job_status(job_id: str = Query(...)):
     Returns:
         Job status, current stage, and logs
     """
-    if job_id not in job_storage:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Try to get from memory first
+    if job_id in job_storage:
+        job = job_storage[job_id]
+        return {
+            "job_id": job_id,
+            "status": job.get("status", "unknown"),
+            "logs": job.get("logs", []),
+            "has_result": "result" in job,
+            "needs_human_review": job.get("needs_human_review", False)
+        }
     
-    job = job_storage[job_id]
+    # If not in memory, check if result exists on disk
+    output_path = get_output_path(job_id, "json")
+    if output_path.exists():
+        try:
+            result = load_json(output_path)
+            # Restore to job_storage
+            job_storage[job_id] = {
+                "status": "processed",
+                "result": result,
+                "logs": [],
+                "needs_human_review": result.get("needs_human_review", False)
+            }
+            return {
+                "job_id": job_id,
+                "status": "processed",
+                "logs": [],
+                "has_result": True,
+                "needs_human_review": result.get("needs_human_review", False)
+            }
+        except Exception:
+            pass
     
-    return {
-        "job_id": job_id,
-        "status": job.get("status", "unknown"),
-        "logs": job.get("logs", []),
-        "has_result": "result" in job,
-        "needs_human_review": job.get("needs_human_review", False)
-    }
+    # Job not found
+    raise HTTPException(
+        status_code=404,
+        detail=f"Job not found. Job ID: {job_id}. The job may not exist or the Python service was restarted."
+    )
 
 
 @app.post("/verify")
@@ -901,6 +927,56 @@ async def verify_corrections(request: VerifyRequest, auto_promote: bool = Query(
     return response
 
 
+def get_clean_invoice_data(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract only the final user-facing invoice data, excluding technical metadata.
+    
+    Args:
+        result: Full extraction result with all metadata
+    
+    Returns:
+        Clean invoice data with only final corrected values
+    """
+    # Fields to include in user-facing export
+    clean_data = {
+        "invoice_id": result.get("invoice_id"),
+        "vendor_name": result.get("vendor_name"),
+        "vendor_id": result.get("vendor_id"),
+        "invoice_date": result.get("invoice_date"),
+        "due_date": result.get("due_date"),
+        "total_amount": result.get("total_amount"),
+        "amount_subtotal": result.get("amount_subtotal"),
+        "amount_tax": result.get("amount_tax"),
+        "currency": result.get("currency"),
+    }
+    
+    # Include line items if present, with normalization
+    if result.get("line_items"):
+        normalized_line_items = []
+        for item in result.get("line_items", []):
+            normalized_item = dict(item)  # Create a copy
+            
+            # Normalize: if unit_price exists but quantity is null/undefined, default quantity to 1
+            if (normalized_item.get("unit_price") is not None and 
+                normalized_item.get("quantity") is None):
+                normalized_item["quantity"] = 1
+            
+            # Calculate total if quantity and unit_price exist but total is missing
+            quantity = normalized_item.get("quantity")
+            unit_price = normalized_item.get("unit_price")
+            if (quantity is not None and unit_price is not None and 
+                normalized_item.get("total") is None):
+                normalized_item["total"] = quantity * unit_price
+            
+            normalized_line_items.append(normalized_item)
+        
+        clean_data["line_items"] = normalized_line_items
+    
+    # Remove None values for cleaner output (but keep line_items even if empty list)
+    clean_data = {k: v for k, v in clean_data.items() if v is not None or k == "line_items"}
+    
+    return clean_data
+
+
 @app.get("/export/csv")
 async def export_csv(job_id: str = Query(...), erp_type: str = Query("quickbooks", description="ERP type: quickbooks, sap, oracle, xero"), 
                     skip_safety_check: bool = Query(False)):
@@ -914,108 +990,207 @@ async def export_csv(job_id: str = Query(...), erp_type: str = Query("quickbooks
     Returns:
         CSV file download
     """
-    if job_id not in job_storage:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = job_storage[job_id]
-    
-    if "result" not in job:
-        raise HTTPException(status_code=400, detail="Job not processed yet")
-    
-    result = job["result"]
-    
-    # Safety gates: validate before export
-    if not skip_safety_check:
-        from app.erp_export import validate_export_safety
-        is_safe, warnings = validate_export_safety(result)
-        if not is_safe:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Export blocked: {', '.join(warnings)}. Use skip_safety_check=true to override (not recommended)."
-            )
-    
-    # Use ERP-specific format if requested
-    if erp_type in ["quickbooks", "sap", "oracle", "xero"]:
-        from app.erp_export import export_to_erp_format
-        csv_content = export_to_erp_format(result, erp_type)
-        filename = f"invoice_{job_id}_{erp_type}.csv"
-    else:
-        # Default CSV format
-        output = io.StringIO()
-        writer = csv.writer(output)
+    try:
+        # Try to get result from memory first
+        result = None
+        if job_id in job_storage:
+            job = job_storage[job_id]
+            if "result" in job:
+                result = job["result"]
         
-        # Header
-        writer.writerow(["Field", "Value"])
+        # If not in memory, try to load from disk
+        if result is None:
+            output_path = get_output_path(job_id, "json")
+            if output_path.exists():
+                try:
+                    result = load_json(output_path)
+                    # Restore to job_storage for future use
+                    if job_id not in job_storage:
+                        job_storage[job_id] = {"status": "processed", "result": result}
+                    else:
+                        job_storage[job_id]["result"] = result
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to load result from disk: {str(e)}"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Job not found. Job ID: {job_id}. The job may not exist or the Python service was restarted."
+                )
         
-        # Data rows
-        writer.writerow(["Invoice ID", result.get("invoice_id", "")])
-        writer.writerow(["Vendor Name", result.get("vendor_name", "")])
-        writer.writerow(["Vendor ID", result.get("vendor_id", "")])
-        writer.writerow(["Invoice Date", result.get("invoice_date", "")])
-        writer.writerow(["Due Date", result.get("due_date", "")])
-        writer.writerow(["Subtotal", result.get("amount_subtotal", "")])
-        writer.writerow(["Tax", result.get("amount_tax", "")])
-        writer.writerow(["Total Amount", result.get("total_amount", "")])
-        writer.writerow(["Currency", result.get("currency", "")])
-        writer.writerow(["Dedupe Hash", result.get("dedupe_hash", "")])
-        writer.writerow(["Is Duplicate", "Yes" if result.get("is_duplicate") else "No"])
-        writer.writerow(["Arithmetic Mismatch", "Yes" if result.get("arithmetic_mismatch") else "No"])
+        if not result:
+            raise HTTPException(status_code=400, detail="Job not processed yet or result is empty")
         
-        # Line items (if any)
-        if result.get("line_items"):
-            writer.writerow([])
-            writer.writerow(["Line Items"])
-            writer.writerow(["Description", "Quantity", "Unit Price", "Total"])
-            for item in result["line_items"]:
-                writer.writerow([
-                    item.get("description", ""),
-                    item.get("quantity", ""),
-                    item.get("unit_price", ""),
-                    item.get("total", "")
-                ])
+        # Extract only the clean, user-facing invoice data (final corrected values)
+        clean_data = get_clean_invoice_data(result)
         
-        csv_content = output.getvalue()
-        filename = f"invoice_{job_id}.csv"
-    
-    return StreamingResponse(
-        iter([csv_content]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+        # Safety gates: validate before export (using clean data)
+        if not skip_safety_check:
+            from app.erp_export import validate_export_safety
+            is_safe, warnings = validate_export_safety(clean_data)
+            if not is_safe:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Export blocked: {', '.join(warnings)}. Use skip_safety_check=true to override (not recommended)."
+                )
+        
+        # Use ERP-specific format if requested
+        if erp_type in ["quickbooks", "sap", "oracle", "xero"]:
+            from app.erp_export import export_to_erp_format
+            csv_content = export_to_erp_format(clean_data, erp_type)
+            filename = f"invoice_{job_id}_{erp_type}.csv"
+        else:
+            # Default CSV format - clean user-facing data only
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Header
+            writer.writerow(["Field", "Value"])
+            
+            # Data rows - only final corrected values
+            writer.writerow(["Invoice ID", clean_data.get("invoice_id", "")])
+            writer.writerow(["Vendor Name", clean_data.get("vendor_name", "")])
+            writer.writerow(["Vendor ID", clean_data.get("vendor_id", "")])
+            writer.writerow(["Invoice Date", clean_data.get("invoice_date", "")])
+            writer.writerow(["Due Date", clean_data.get("due_date", "")])
+            writer.writerow(["Subtotal", clean_data.get("amount_subtotal", "")])
+            writer.writerow(["Tax", clean_data.get("amount_tax", "")])
+            writer.writerow(["Total Amount", clean_data.get("total_amount", "")])
+            writer.writerow(["Currency", clean_data.get("currency", "")])
+            
+            # Line items (if any)
+            if clean_data.get("line_items"):
+                writer.writerow([])
+                writer.writerow(["Line Items"])
+                writer.writerow(["Description", "Quantity", "Unit Price", "Total"])
+                for item in clean_data["line_items"]:
+                    writer.writerow([
+                        item.get("description", ""),
+                        item.get("quantity", ""),
+                        item.get("unit_price", ""),
+                        item.get("total", "")
+                    ])
+            
+            csv_content = output.getvalue()
+            filename = f"invoice_{job_id}.csv"
+        
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = f"CSV export error: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.get("/export/json")
 async def export_json(job_id: str = Query(...)):
-    """Export invoice as JSON.
+    """Export invoice as JSON with final corrected data (user-facing format).
     
     Args:
         job_id: Job ID from upload
     
     Returns:
-        JSON file with invoice data
+        JSON file with clean invoice data (final corrected values only)
     """
-    if job_id not in job_storage:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = job_storage[job_id]
-    result = job.get("result")
-    
-    if not result:
-        raise HTTPException(
-            status_code=400,
-            detail="Invoice has not been processed yet. Please process the invoice first."
+    try:
+        # Try to get result from memory first
+        result = None
+        if job_id in job_storage:
+            job = job_storage[job_id]
+            result = job.get("result")
+        
+        # If not in memory, try to load from disk
+        if result is None:
+            output_path = get_output_path(job_id, "json")
+            if output_path.exists():
+                try:
+                    result = load_json(output_path)
+                    # Restore to job_storage for future use
+                    if job_id not in job_storage:
+                        job_storage[job_id] = {"status": "processed", "result": result}
+                    else:
+                        job_storage[job_id]["result"] = result
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to load result from disk: {str(e)}"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Job not found. Job ID: {job_id}. The job may not exist or the Python service was restarted."
+                )
+        
+        if not result:
+            raise HTTPException(
+                status_code=400,
+                detail="Invoice has not been processed yet. Please process the invoice first."
+            )
+        
+        # Extract only the clean, user-facing invoice data (final corrected values)
+        clean_data = get_clean_invoice_data(result)
+        
+        # Return JSON response with proper headers
+        import json
+        from datetime import datetime
+        
+        # Custom JSON encoder to handle non-serializable types
+        def json_serializer(obj):
+            """JSON serializer for objects not serializable by default json code"""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            elif hasattr(obj, '__dict__'):
+                return obj.__dict__
+            elif hasattr(obj, '__str__'):
+                return str(obj)
+            raise TypeError(f"Type {type(obj)} not serializable")
+        
+        try:
+            json_content = json.dumps(clean_data, indent=2, ensure_ascii=False, default=json_serializer)
+        except (TypeError, ValueError) as e:
+            # If serialization fails, try to clean the result
+            import copy
+            cleaned_result = copy.deepcopy(clean_data)
+            
+            # Convert any remaining non-serializable objects to strings
+            if isinstance(cleaned_result, dict):
+                for key, value in list(cleaned_result.items()):
+                    try:
+                        json.dumps(value)  # Test if serializable
+                    except (TypeError, ValueError):
+                        cleaned_result[key] = str(value)
+            
+            try:
+                json_content = json.dumps(cleaned_result, indent=2, ensure_ascii=False, default=json_serializer)
+            except Exception as e2:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to serialize result to JSON: {str(e2)}"
+                )
+        
+        filename = f"invoice_{job_id}.json"
+        
+        return Response(
+            content=json_content,
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-    
-    # Return JSON response with proper headers
-    import json
-    json_content = json.dumps(result, indent=2, ensure_ascii=False)
-    filename = f"invoice_{job_id}.json"
-    
-    return Response(
-        content=json_content,
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = f"JSON export error: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
+        )
 
 
 @app.get("/metrics", response_model=MetricsResponse)

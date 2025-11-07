@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { createDocument, getUserDocuments, getDocumentById, updateDocumentExtractedData } from '../services/document.service.js';
-import { DocumentType } from '../models/Document.model.js';
+import { createDocument, getUserDocuments, getDocumentById, updateDocumentExtractedData, getDocumentsByBatchId, deleteDocument } from '../services/document.service.js';
+import { DocumentType, DocumentStatus } from '../models/Document.model.js';
 import { ApiResponseHelper } from '../utils/apiResponse.js';
 import { logger } from '../utils/logger.js';
 import { AuthRequest } from '../types/auth.types.js';
@@ -148,8 +148,25 @@ export const updateDocument = asyncHandler(
         description: item.description || '',
         quantity: item.quantity ?? undefined,
         unitPrice: item.unit_price ?? undefined,
-        amount: item.total ?? undefined,
+        total: item.total ?? undefined, // Use 'total' not 'amount' to match schema
       }));
+      
+      // Recalculate subtotal and total from line items
+      const lineItemsSubtotal = lineItems.reduce((sum, item) => {
+        const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
+        return sum + (itemTotal || 0);
+      }, 0);
+      
+      // Update subtotal if not explicitly provided
+      if (updatedExtractedData.amountSubtotal === undefined) {
+        updatedExtractedData.amountSubtotal = lineItemsSubtotal;
+      }
+      
+      // Update total amount if not explicitly provided (subtotal + tax)
+      if (updatedExtractedData.totalAmount === undefined) {
+        const taxAmount = updatedExtractedData.amountTax || 0;
+        updatedExtractedData.totalAmount = lineItemsSubtotal + taxAmount;
+      }
     }
 
     // If other extracted data fields are provided, merge them
@@ -157,15 +174,15 @@ export const updateDocument = asyncHandler(
       updatedExtractedData = {
         ...updatedExtractedData,
         ...extractedData,
-        // Preserve lineItems if not being updated separately
-        lineItems: extractedData.lineItems 
-          ? extractedData.lineItems.map((item: any) => ({
-              description: item.description || '',
-              quantity: item.quantity ?? undefined,
-              unitPrice: item.unitPrice ?? item.unit_price ?? undefined,
-              amount: item.amount ?? item.total ?? undefined,
-            }))
-          : updatedExtractedData.lineItems,
+          // Preserve lineItems if not being updated separately
+          lineItems: extractedData.lineItems 
+            ? extractedData.lineItems.map((item: any) => ({
+                description: item.description || '',
+                quantity: item.quantity ?? undefined,
+                unitPrice: item.unitPrice ?? item.unit_price ?? undefined,
+                total: item.total ?? item.amount ?? undefined, // Use 'total' to match schema
+              }))
+            : updatedExtractedData.lineItems,
       };
     }
 
@@ -286,6 +303,97 @@ export const uploadDocumentsBatch = asyncHandler(
         failed,
       },
       `Batch upload completed: ${successful} successful, ${failed} failed`
+    );
+  }
+);
+
+// Get batch status
+export const getBatchStatus = asyncHandler(
+  async (req: AuthRequest, res: Response): Promise<Response> => {
+    if (!req.user) {
+      return ApiResponseHelper.unauthorized(res, 'User not authenticated');
+    }
+
+    const userId = (req.user as { _id: { toString: () => string } })._id.toString();
+    const { batchId } = req.params;
+
+    if (!batchId) {
+      return ApiResponseHelper.badRequest(res, 'Batch ID is required');
+    }
+
+    const documents = await getDocumentsByBatchId(batchId, userId);
+
+    if (documents.length === 0) {
+      return ApiResponseHelper.notFound(res, 'Batch not found or no documents in batch');
+    }
+
+    // Calculate batch statistics
+    const total = documents.length;
+    const statusCounts = {
+      uploaded: 0,
+      queued: 0,
+      processing: 0,
+      processed: 0,
+      failed: 0,
+    };
+
+    documents.forEach((doc) => {
+      const status = doc.status as DocumentStatus;
+      if (status in statusCounts) {
+        statusCounts[status as keyof typeof statusCounts]++;
+      }
+    });
+
+    const completed = statusCounts.processed + statusCounts.failed;
+    const inProgress = statusCounts.uploaded + statusCounts.queued + statusCounts.processing;
+    const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    return ApiResponseHelper.success(
+      res,
+      {
+        batchId,
+        total,
+        completed,
+        inProgress,
+        progress,
+        statusCounts,
+        documents: documents.map((doc) => ({
+          id: (doc._id as { toString: () => string }).toString(),
+          fileName: doc.fileName,
+          originalFileName: doc.originalFileName,
+          status: doc.status,
+          pythonJobId: doc.pythonJobId,
+          createdAt: doc.createdAt,
+          processedAt: doc.processedAt,
+        })),
+      },
+      'Batch status retrieved successfully'
+    );
+  }
+);
+
+// Delete document
+export const deleteDocumentController = asyncHandler(
+  async (req: AuthRequest, res: Response): Promise<Response> => {
+    if (!req.user) {
+      return ApiResponseHelper.unauthorized(res, 'User not authenticated');
+    }
+
+    const userId = (req.user as { _id: { toString: () => string } })._id.toString();
+    const { id } = req.params;
+
+    const deleted = await deleteDocument(id, userId);
+
+    if (!deleted) {
+      return ApiResponseHelper.notFound(res, 'Document not found or access denied');
+    }
+
+    logger.info(`Document deleted: ${id} by user: ${userId}`);
+
+    return ApiResponseHelper.success(
+      res,
+      { deleted: true },
+      'Document deleted successfully'
     );
   }
 );

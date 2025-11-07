@@ -162,6 +162,182 @@ class DocumentAPI {
     );
     return response.data;
   }
+
+  /**
+   * Get batch status
+   * @param batchId - Batch ID
+   */
+  async getBatchStatus(batchId: string): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      batchId: string;
+      total: number;
+      completed: number;
+      inProgress: number;
+      progress: number;
+      statusCounts: {
+        uploaded: number;
+        queued: number;
+        processing: number;
+        processed: number;
+        failed: number;
+      };
+      documents: Array<{
+        id: string;
+        fileName: string;
+        originalFileName: string;
+        status: string;
+        pythonJobId?: string;
+        createdAt: string;
+        processedAt?: string;
+      }>;
+    };
+  }> {
+    const response = await apiClient.get<{
+      success: boolean;
+      message: string;
+      data: {
+        batchId: string;
+        total: number;
+        completed: number;
+        inProgress: number;
+        progress: number;
+        statusCounts: {
+          uploaded: number;
+          queued: number;
+          processing: number;
+          processed: number;
+          failed: number;
+        };
+        documents: Array<{
+          id: string;
+          fileName: string;
+          originalFileName: string;
+          status: string;
+          pythonJobId?: string;
+          createdAt: string;
+          processedAt?: string;
+        }>;
+      };
+    }>(`/documents/batch/${batchId}`);
+    return response.data;
+  }
+
+  /**
+   * Export document as CSV
+   * @param documentId - Document ID
+   * @param erpType - ERP format type (quickbooks, sap, oracle, xero, default)
+   * @param skipSafetyCheck - Skip safety checks
+   */
+  async exportCSV(
+    documentId: string,
+    erpType: string = 'quickbooks',
+    skipSafetyCheck: boolean = false
+  ): Promise<Blob> {
+    try {
+      const response = await apiClient.get(`/invoices/export/csv`, {
+        params: {
+          documentId,
+          erp_type: erpType,
+          skip_safety_check: skipSafetyCheck,
+        },
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error: any) {
+      // Handle axios errors - blob responses might contain error JSON
+      if (error.response && error.response.data instanceof Blob) {
+        try {
+          const blobClone = error.response.data.slice();
+          const text = await blobClone.text();
+          let errorMessage = `Export failed with status ${error.response.status}`;
+          try {
+            const errorJson = JSON.parse(text);
+            errorMessage = errorJson.message || errorJson.error || errorMessage;
+          } catch {
+            // If it's not JSON, use the text if it's short enough to be an error message
+            if (text.length < 500) {
+              errorMessage = text;
+            }
+          }
+          throw new Error(errorMessage);
+        } catch (parseError) {
+          // If we can't parse the error, use the original error
+          throw new Error(`CSV export failed: ${error.response?.status || 'Unknown error'}`);
+        }
+      }
+      
+      // If it's already an Error, rethrow it
+      if (error instanceof Error) {
+        throw error;
+      }
+      // Otherwise, wrap it
+      throw new Error(`CSV export failed: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Export document as JSON
+   * @param documentId - Document ID
+   */
+  async exportJSON(documentId: string): Promise<Blob> {
+    try {
+      const response = await apiClient.get(`/invoices/export/json`, {
+        params: {
+          documentId,
+        },
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error: any) {
+      // Handle axios errors - blob responses might contain error JSON
+      if (error.response && error.response.data instanceof Blob) {
+        try {
+          const blobClone = error.response.data.slice();
+          const text = await blobClone.text();
+          let errorMessage = `Export failed with status ${error.response.status}`;
+          try {
+            const errorJson = JSON.parse(text);
+            errorMessage = errorJson.message || errorJson.error || errorMessage;
+          } catch {
+            // If it's not JSON, use the text if it's short enough to be an error message
+            if (text.length < 500) {
+              errorMessage = text;
+            }
+          }
+          throw new Error(errorMessage);
+        } catch (parseError) {
+          // If we can't parse the error, use the original error
+          throw new Error(`JSON export failed: ${error.response?.status || 'Unknown error'}`);
+        }
+      }
+      
+      // If it's already an Error, rethrow it
+      if (error instanceof Error) {
+        throw error;
+      }
+      // Otherwise, wrap it
+      throw new Error(`JSON export failed: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Delete a document
+   * @param documentId - Document ID
+   */
+  async deleteDocument(documentId: string): Promise<{
+    success: boolean;
+    message: string;
+    data?: { deleted: boolean };
+  }> {
+    const response = await apiClient.delete<{
+      success: boolean;
+      message: string;
+      data?: { deleted: boolean };
+    }>(`/documents/${documentId}`);
+    return response.data;
+  }
 }
 
 export const documentAPI = new DocumentAPI();

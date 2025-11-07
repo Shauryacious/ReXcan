@@ -6,12 +6,14 @@
  */
 
 import { useState } from 'react';
-import { invoiceAPI } from '../services/invoice.api';
+import { documentAPI } from '../services/document.api';
 
 interface ExportButtonProps {
   documentId: string;
   filename?: string;
   disabled?: boolean;
+  documentStatus?: string;
+  pythonJobId?: string;
 }
 
 const ERP_FORMATS = [
@@ -22,27 +24,49 @@ const ERP_FORMATS = [
   { value: 'default', label: 'Default (CSV)' },
 ];
 
+/**
+ * Sanitize filename for download by removing file extensions and special characters
+ */
+const sanitizeFilename = (filename: string): string => {
+  // Remove file extension
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
+  // Remove or replace special characters that might cause issues in filenames
+  return nameWithoutExt
+    .replace(/[^a-z0-9]/gi, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '') || 'document';
+};
+
 const ExportButton = ({
   documentId,
   filename = 'invoice',
   disabled = false,
+  documentStatus,
+  pythonJobId,
 }: ExportButtonProps) => {
   const [isExporting, setIsExporting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState('quickbooks');
 
+  // Determine if export should be disabled based on document status
+  const isProcessed = documentStatus === 'processed' && pythonJobId;
+  const isDisabled = disabled || !isProcessed || isExporting;
+  
+  // Sanitize filename for downloads
+  const sanitizedFilename = sanitizeFilename(filename);
+
   const handleCSVExport = async (erpType: string = 'quickbooks') => {
-    if (disabled || isExporting) return;
+    if (isDisabled) return;
 
     try {
       setIsExporting(true);
-      const blob = await invoiceAPI.exportCSV(documentId, erpType, false);
+      const blob = await documentAPI.exportCSV(documentId, erpType, false);
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${filename}_${erpType}.csv`;
+      a.download = `${sanitizedFilename}_${erpType}.csv`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -57,17 +81,17 @@ const ExportButton = ({
   };
 
   const handleJSONExport = async () => {
-    if (disabled || isExporting) return;
+    if (isDisabled) return;
 
     try {
       setIsExporting(true);
-      const blob = await invoiceAPI.exportJSON(documentId);
+      const blob = await documentAPI.exportJSON(documentId);
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${filename}.json`;
+      a.download = `${sanitizedFilename}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -85,7 +109,8 @@ const ExportButton = ({
     <div className="relative">
       <button
         onClick={() => setShowMenu(!showMenu)}
-        disabled={disabled || isExporting}
+        disabled={isDisabled}
+        title={!isProcessed ? 'Document must be processed before exporting' : undefined}
         className={`
           inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md
           text-white bg-rexcan-dark-blue-primary hover:bg-rexcan-dark-blue-secondary

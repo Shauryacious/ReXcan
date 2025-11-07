@@ -6,6 +6,8 @@ import {
   getDocuments,
   getDocument,
   updateDocument,
+  getBatchStatus,
+  deleteDocumentController,
 } from '../controllers/document.controller.js';
 import { authenticate } from '../middlewares/authenticate.js';
 import { uploadSingle, uploadMultiple } from '../middlewares/upload.js';
@@ -47,6 +49,9 @@ router.post('/upload', uploadSingle, handleMulterError, uploadDocument);
 // Batch upload documents
 router.post('/upload/batch', uploadMultiple, handleMulterError, uploadDocumentsBatch);
 
+// Get batch status
+router.get('/batch/:batchId', getBatchStatus);
+
 // Get user's documents
 router.get('/', getDocuments);
 
@@ -56,6 +61,9 @@ router.get('/:id', getDocument);
 // Update document extracted data
 router.patch('/:id', updateDocument);
 router.put('/:id', updateDocument);
+
+// Delete document
+router.delete('/:id', deleteDocumentController);
 
 export { router as documentRoutes };
 

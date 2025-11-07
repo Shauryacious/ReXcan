@@ -4,6 +4,7 @@ import DocumentDetailsModal from '@/components/DocumentDetailsModal';
 import DocumentsList from '@/components/DocumentsList';
 import FileUpload from '@/components/FileUpload';
 import ProcessingStatusLog from '@/components/ProcessingStatusLog';
+import BatchProcessingStatus from '@/components/BatchProcessingStatus';
 import { documentAPI } from '@/services/document.api';
 import type { Document } from '@/types/document.types';
 import { MODEL_OPTIONS, type AIModel } from '@/types/model.types';
@@ -317,13 +318,31 @@ const Dashboard = () => {
             <DocumentsList
               refreshTrigger={refreshTrigger}
               onDocumentSelect={handleDocumentSelect}
+              onDocumentDeleted={() => {
+                // Refresh documents list when a document is deleted
+                setRefreshTrigger((prev) => prev + 1);
+              }}
             />
           </div>
 
-          {/* Processing Status Log - Show for documents being processed */}
+          {/* Batch Processing Status - Show if batch upload was performed */}
+          {batchUploadResult && batchUploadResult.batchId && (
+            <div className="mb-6">
+              <BatchProcessingStatus
+                batchId={batchUploadResult.batchId}
+                onComplete={() => {
+                  // Refresh documents list when batch processing completes
+                  setRefreshTrigger((prev) => prev + 1);
+                }}
+              />
+            </div>
+          )}
+
+          {/* Processing Status Log - Show for documents being processed (only if modal is not open to avoid duplicate polling) */}
           {selectedDocument && 
            selectedDocument.status === 'processing' && 
-           selectedDocument.pythonJobId && (
+           selectedDocument.pythonJobId &&
+           !isModalOpen && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">
                 Processing Status
@@ -345,6 +364,11 @@ const Dashboard = () => {
         document={selectedDocument}
         isOpen={isModalOpen}
         onClose={handleCloseModal}
+        onDocumentDeleted={() => {
+          // Refresh documents list and close modal when document is deleted
+          setRefreshTrigger((prev) => prev + 1);
+          handleCloseModal();
+        }}
       />
     </div>
   );

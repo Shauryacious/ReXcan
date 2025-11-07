@@ -4,7 +4,8 @@
  * Provides CRUD operations for invoice line items.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
 import type { LineItem } from '../services/invoice.api';
 
 interface EditableLineItemsTableProps {
@@ -14,9 +15,56 @@ interface EditableLineItemsTableProps {
 }
 
 const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineItemsTableProps) => {
-  const [items, setItems] = useState<LineItem[]>(lineItems || []);
+  // Normalize line items: default quantity to 1 if unit_price exists but quantity is missing
+  const normalizedLineItems = (lineItems || []).map(item => {
+    // If unit_price exists but quantity is null/undefined, default quantity to 1
+    if ((item.unit_price !== null && item.unit_price !== undefined) && 
+        (item.quantity === null || item.quantity === undefined)) {
+      return {
+        ...item,
+        quantity: 1,
+        total: item.total ?? (item.unit_price * 1), // Calculate total if missing
+      };
+    }
+    // If quantity and unit_price exist but total is missing, calculate it
+    if ((item.quantity !== null && item.quantity !== undefined) &&
+        (item.unit_price !== null && item.unit_price !== undefined) &&
+        (item.total === null || item.total === undefined)) {
+      return {
+        ...item,
+        total: item.quantity * item.unit_price,
+      };
+    }
+    return item;
+  });
+  
+  const [items, setItems] = useState<LineItem[]>(normalizedLineItems);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingItem, setEditingItem] = useState<LineItem | null>(null);
+  
+  // Update items when lineItems prop changes
+  useEffect(() => {
+    const normalized = (lineItems || []).map(item => {
+      if ((item.unit_price !== null && item.unit_price !== undefined) && 
+          (item.quantity === null || item.quantity === undefined)) {
+        return {
+          ...item,
+          quantity: 1,
+          total: item.total ?? (item.unit_price * 1),
+        };
+      }
+      if ((item.quantity !== null && item.quantity !== undefined) &&
+          (item.unit_price !== null && item.unit_price !== undefined) &&
+          (item.total === null || item.total === undefined)) {
+        return {
+          ...item,
+          total: item.quantity * item.unit_price,
+        };
+      }
+      return item;
+    });
+    setItems(normalized);
+  }, [lineItems]);
 
   const formatCurrency = (amount: number | null | undefined): string => {
     if (amount === null || amount === undefined) return 'N/A';
@@ -34,7 +82,7 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
   const handleAdd = () => {
     const newItem: LineItem = {
       description: '',
-      quantity: null,
+      quantity: 1, // Default quantity is 1
       unit_price: null,
       total: null,
     };
@@ -52,15 +100,28 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
     if (editingIndex === null || !editingItem) return;
 
     const updatedItems = [...items];
-    // Calculate total if quantity and unit_price are provided
-    if (editingItem.quantity !== null && editingItem.quantity !== undefined &&
-        editingItem.unit_price !== null && editingItem.unit_price !== undefined) {
-      editingItem.total = calculateTotal(editingItem.quantity, editingItem.unit_price);
+    const itemToSave: LineItem = { ...editingItem };
+    
+    // Default quantity to 1 if unit_price exists but quantity is missing
+    if ((itemToSave.unit_price !== null && itemToSave.unit_price !== undefined) &&
+        (itemToSave.quantity === null || itemToSave.quantity === undefined)) {
+      itemToSave.quantity = 1;
     }
-    updatedItems[editingIndex] = editingItem;
+    
+    // Calculate total if quantity and unit_price are provided
+    if (itemToSave.quantity !== null && itemToSave.quantity !== undefined &&
+        itemToSave.unit_price !== null && itemToSave.unit_price !== undefined) {
+      itemToSave.total = calculateTotal(itemToSave.quantity, itemToSave.unit_price);
+    } else {
+      // Ensure total is null if calculation can't be done
+      itemToSave.total = itemToSave.total ?? null;
+    }
+    
+    updatedItems[editingIndex] = itemToSave;
     setItems(updatedItems);
     setEditingIndex(null);
     setEditingItem(null);
+    // Trigger update immediately for auto-save
     onUpdate(updatedItems);
   };
 
@@ -77,10 +138,31 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
 
   const handleFieldChange = (field: keyof LineItem, value: string | number | null) => {
     if (!editingItem) return;
-    setEditingItem({
+    const updatedItem: LineItem = {
       ...editingItem,
       [field]: value === '' ? null : value,
-    });
+    };
+    
+    // Auto-update total when quantity or unit_price changes
+    if (field === 'quantity' || field === 'unit_price') {
+      // Default quantity to 1 if unit_price exists but quantity is missing
+      const effectiveQuantity = updatedItem.quantity ?? 
+        (updatedItem.unit_price !== null && updatedItem.unit_price !== undefined ? 1 : null);
+      
+      if (effectiveQuantity !== null && effectiveQuantity !== undefined &&
+          updatedItem.unit_price !== null && updatedItem.unit_price !== undefined) {
+        updatedItem.total = calculateTotal(effectiveQuantity, updatedItem.unit_price);
+        // Also update quantity if it was defaulted
+        if (updatedItem.quantity === null || updatedItem.quantity === undefined) {
+          updatedItem.quantity = 1;
+        }
+      } else {
+        // Clear total if quantity or unit_price is missing
+        updatedItem.total = null;
+      }
+    }
+    
+    setEditingItem(updatedItem);
   };
 
   if (items.length === 0 && editingIndex === null) {
@@ -170,7 +252,9 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
                       />
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">
-                      {editingItem && calculateTotal(editingItem.quantity, editingItem.unit_price) !== null
+                      {editingItem && editingItem.total !== null && editingItem.total !== undefined
+                        ? formatCurrency(editingItem.total)
+                        : editingItem && calculateTotal(editingItem.quantity, editingItem.unit_price) !== null
                         ? formatCurrency(calculateTotal(editingItem.quantity, editingItem.unit_price))
                         : 'N/A'}
                     </td>
@@ -203,15 +287,34 @@ const EditableLineItemsTable = ({ lineItems, currency, onUpdate }: EditableLineI
                       {item.description || 'N/A'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600">
-                      {item.quantity !== null && item.quantity !== undefined
-                        ? item.quantity.toFixed(2)
-                        : 'N/A'}
+                      {(() => {
+                        // Default to 1 if unit_price exists but quantity is missing
+                        const displayQuantity = item.quantity ?? 
+                          (item.unit_price !== null && item.unit_price !== undefined ? 1 : null);
+                        return displayQuantity !== null && displayQuantity !== undefined
+                          ? displayQuantity.toFixed(2)
+                          : 'N/A';
+                      })()}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600">
                       {formatCurrency(item.unit_price)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
-                      {formatCurrency(item.total)}
+                      {(() => {
+                        // Calculate total: use saved total, or calculate from quantity × unit_price
+                        // Default quantity to 1 if unit_price exists
+                        const effectiveQuantity = item.quantity ?? 
+                          (item.unit_price !== null && item.unit_price !== undefined ? 1 : null);
+                        const effectiveUnitPrice = item.unit_price;
+                        
+                        if (item.total !== null && item.total !== undefined) {
+                          return formatCurrency(item.total);
+                        } else if (effectiveQuantity !== null && effectiveQuantity !== undefined &&
+                                   effectiveUnitPrice !== null && effectiveUnitPrice !== undefined) {
+                          return formatCurrency(effectiveQuantity * effectiveUnitPrice);
+                        }
+                        return 'N/A';
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-2">

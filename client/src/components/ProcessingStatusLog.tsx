@@ -43,6 +43,8 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
   const logEndRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const isPollingRef = useRef(false);
+  const isCompleteRef = useRef(false);
+  const jobNotFoundRef = useRef(false);
 
   useEffect(() => {
     if (!pythonJobId) return;
@@ -56,12 +58,20 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
     // Reset state
     setJobNotFound(false);
     setError(null);
+    setIsComplete(false);
+    isCompleteRef.current = false;
+    jobNotFoundRef.current = false;
     isPollingRef.current = false;
 
     const pollStatus = async (): Promise<{ complete: boolean; stopPolling: boolean }> => {
       // Prevent multiple simultaneous polls
       if (isPollingRef.current) {
         return { complete: false, stopPolling: false };
+      }
+
+      // Stop polling if already complete or job not found
+      if (isCompleteRef.current || jobNotFoundRef.current) {
+        return { complete: isCompleteRef.current, stopPolling: true };
       }
 
       isPollingRef.current = true;
@@ -90,16 +100,36 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
           
           // Check if processing is complete
           const jobComplete = newStatus === 'processed' || has_result;
-          if (jobComplete && !isComplete) {
+          if (jobComplete) {
+            isCompleteRef.current = true;
             setIsComplete(true);
             onComplete?.();
+            isPollingRef.current = false;
+            return { complete: true, stopPolling: true };
           }
           
           isPollingRef.current = false;
-          return { complete: jobComplete, stopPolling: jobComplete };
+          return { complete: false, stopPolling: false };
         } else {
-          // Response was not successful
+          // Response was not successful - could be 404 or other error
           isPollingRef.current = false;
+          const errorMessage = response.message || 'Job not found';
+          const isNotFound = errorMessage.toLowerCase().includes('not found') || 
+                            errorMessage.toLowerCase().includes('404');
+          
+          if (isNotFound) {
+            jobNotFoundRef.current = true;
+            setJobNotFound(true);
+            setError('Job not found. The processing job may have expired or been cleared.');
+            console.warn('Job not found, stopping polling:', pythonJobId);
+            // Immediately clear interval if it exists
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
+            }
+            return { complete: false, stopPolling: true };
+          }
+          
           return { complete: false, stopPolling: false };
         }
       } catch (error: any) {
@@ -107,17 +137,27 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
         
         // Check if it's a 404 (job not found) error
         // Axios errors have response.status, and error messages may contain status codes
-        const statusCode = error?.response?.status || error?.status;
-        const errorMessage = error?.message || error?.response?.data?.message || String(error);
+        const statusCode = error?.response?.status || error?.status || error?.code;
+        const errorMessage = error?.message || 
+                            error?.response?.data?.message || 
+                            error?.response?.data?.error ||
+                            String(error);
         const isNotFound = statusCode === 404 || 
-                          errorMessage.includes('404') || 
-                          errorMessage.includes('not found') ||
-                          errorMessage.includes('Job not found');
+                          statusCode === '404' ||
+                          errorMessage.toLowerCase().includes('404') || 
+                          errorMessage.toLowerCase().includes('not found') ||
+                          errorMessage.toLowerCase().includes('job not found');
         
         if (isNotFound) {
+          jobNotFoundRef.current = true;
           setJobNotFound(true);
           setError('Job not found. The processing job may have expired or been cleared.');
-          console.warn('Job not found, stopping polling:', pythonJobId);
+          console.warn('Job not found (404), stopping polling:', pythonJobId);
+          // Immediately clear interval if it exists
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
           return { complete: false, stopPolling: true };
         }
         
@@ -130,9 +170,18 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
 
     // Poll immediately
     pollStatus().then(({ complete, stopPolling }) => {
-      // If not complete and not stopped, continue polling every 2 seconds (reduced frequency)
+      // If not complete and not stopped, continue polling every 2 seconds
       if (!complete && !stopPolling) {
         intervalRef.current = setInterval(async () => {
+          // Check if already complete or job not found before polling
+          if (isCompleteRef.current || jobNotFoundRef.current) {
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
+            }
+            return;
+          }
+          
           const result = await pollStatus();
           if (result.complete || result.stopPolling) {
             if (intervalRef.current) {
@@ -140,7 +189,7 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
               intervalRef.current = null;
             }
           }
-        }, 2000); // Increased to 2 seconds to reduce load
+        }, 2000);
       }
     });
 
@@ -151,7 +200,8 @@ const ProcessingStatusLog = ({ pythonJobId, onComplete, showHeader = true, compa
       }
       isPollingRef.current = false;
     };
-  }, [pythonJobId, onComplete, isComplete]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pythonJobId]); // Removed isComplete and onComplete from dependencies to prevent infinite loops
 
   // Calculate progress from logs
   const calculateProgress = (logEntries: LogEntry[], currentStatus: string): ProcessingMetrics => {

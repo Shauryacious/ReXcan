@@ -5,12 +5,18 @@ import { documentAPI } from '../services/document.api';
 interface DocumentsListProps {
   refreshTrigger?: number;
   onDocumentSelect?: (document: Document) => void;
+  onDocumentDeleted?: () => void;
 }
 
-const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps) => {
+const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: DocumentsListProps) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [exportingJSON, setExportingJSON] = useState(false);
+  const [exportingCSV, setExportingCSV] = useState(false);
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 50,
@@ -40,20 +46,22 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
 
   useEffect(() => {
     void fetchDocuments();
+    // Clear selections when documents refresh
+    setSelectedDocuments(new Set());
   }, [refreshTrigger]);
 
   const getStatusColor = (status: Document['status']) => {
     switch (status) {
       case 'processed':
-        return 'bg-green-500/20 text-green-600 border-green-500/30';
+        return 'bg-green-50 text-green-700 border-green-200';
       case 'processing':
-        return 'bg-blue-500/20 text-blue-600 border-blue-500/30';
+        return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'queued':
-        return 'bg-yellow-500/20 text-yellow-600 border-yellow-500/30';
+        return 'bg-amber-50 text-amber-700 border-amber-200';
       case 'failed':
-        return 'bg-red-500/20 text-red-600 border-red-500/30';
+        return 'bg-red-50 text-red-700 border-red-200';
       default:
-        return 'bg-gray-500/20 text-gray-600 border-gray-500/30';
+        return 'bg-gray-50 text-gray-700 border-gray-200';
     }
   };
 
@@ -75,16 +83,347 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
     });
   };
 
+
+  const handleToggleSelect = (documentId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent triggering document select
+    setSelectedDocuments((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(documentId)) {
+        newSet.delete(documentId);
+      } else {
+        newSet.add(documentId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedDocuments.size === documents.length) {
+      // Deselect all
+      setSelectedDocuments(new Set());
+    } else {
+      // Select all
+      setSelectedDocuments(new Set(documents.map((doc) => doc.id).filter(Boolean) as string[]));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedDocuments.size === 0) return;
+
+    if (!showBulkDeleteConfirm) {
+      setShowBulkDeleteConfirm(true);
+      return;
+    }
+
+    try {
+      setBulkDeleting(true);
+      const documentIds = Array.from(selectedDocuments);
+      
+      // Delete all selected documents
+      const deletePromises = documentIds.map((id) => documentAPI.deleteDocument(id));
+      const results = await Promise.allSettled(deletePromises);
+
+      // Count successes and failures
+      let successCount = 0;
+      let failureCount = 0;
+      const failedIds: string[] = [];
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value.success) {
+          successCount++;
+        } else {
+          failureCount++;
+          failedIds.push(documentIds[index]);
+        }
+      });
+
+      // Remove successfully deleted documents from list
+      const successfulIds = documentIds.filter((id) => !failedIds.includes(id));
+      setDocuments((prev) => prev.filter((doc) => !successfulIds.includes(doc.id)));
+      setPagination((prev) => ({ ...prev, total: prev.total - successCount }));
+      
+      // Clear selections
+      setSelectedDocuments(new Set());
+      setShowBulkDeleteConfirm(false);
+
+      // Show result message
+      if (failureCount > 0) {
+        alert(`Deleted ${successCount} document(s) successfully. ${failureCount} document(s) failed to delete.`);
+      } else {
+        onDocumentDeleted?.();
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete documents';
+      alert(errorMessage);
+      setShowBulkDeleteConfirm(false);
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const handleBulkExportJSON = async () => {
+    if (selectedDocuments.size === 0) return;
+
+    try {
+      setExportingJSON(true);
+      
+      // Get all selected documents that are processed
+      const selectedDocs = documents.filter(
+        (doc) => doc.id && selectedDocuments.has(doc.id) && doc.status === 'processed' && doc.pythonJobId
+      );
+
+      if (selectedDocs.length === 0) {
+        alert('No processed documents selected. Please select documents that have been processed.');
+        return;
+      }
+
+      // Export each document and combine the data
+      const exportPromises = selectedDocs.map(async (doc) => {
+        try {
+          const blob = await documentAPI.exportJSON(doc.id!);
+          
+          // Check if blob is actually an error response
+          if (blob.size === 0) {
+            console.error(`Empty response for document ${doc.id}`);
+            return { error: 'Empty response', docId: doc.id, filename: doc.originalFileName };
+          }
+          
+          const text = await blob.text();
+          
+          // Check if response is JSON error
+          try {
+            const parsed = JSON.parse(text);
+            // If it's an error response object
+            if (parsed.error || parsed.message) {
+              console.error(`Error response for document ${doc.id}:`, parsed);
+              return { error: parsed.error || parsed.message, docId: doc.id, filename: doc.originalFileName };
+            }
+            return { data: parsed, docId: doc.id, filename: doc.originalFileName };
+          } catch (parseError) {
+            // If it's not JSON, it might be an error message
+            if (text.includes('error') || text.includes('Error') || text.includes('failed')) {
+              console.error(`Error in response for document ${doc.id}:`, text);
+              return { error: text, docId: doc.id, filename: doc.originalFileName };
+            }
+            // Try to parse as JSON anyway
+            return { data: JSON.parse(text), docId: doc.id, filename: doc.originalFileName };
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`Failed to export document ${doc.id} (${doc.originalFileName}):`, errorMessage);
+          return { error: errorMessage, docId: doc.id, filename: doc.originalFileName };
+        }
+      });
+
+      const results = await Promise.all(exportPromises);
+      const validResults = results.filter((r) => r && r.data);
+      const errorResults = results.filter((r) => r && r.error);
+
+      if (validResults.length === 0) {
+        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
+        alert(`Failed to export any documents.\n\nErrors:\n${errorDetails || 'Unknown error'}\n\nPlease check the console for more details.`);
+        return;
+      }
+
+      if (errorResults.length > 0) {
+        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
+        console.warn(`Some documents failed to export:\n${errorDetails}`);
+      }
+
+      // Combine into a single JSON array
+      const combinedData = {
+        exported_at: new Date().toISOString(),
+        total_documents: validResults.length,
+        failed_documents: errorResults.length,
+        documents: validResults.map(r => r.data),
+      };
+
+      // Create and download the file
+      const jsonBlob = new Blob([JSON.stringify(combinedData, null, 2)], {
+        type: 'application/json',
+      });
+      const url = window.URL.createObjectURL(jsonBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `documents_export_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to export documents';
+      alert(errorMessage);
+    } finally {
+      setExportingJSON(false);
+    }
+  };
+
+  const handleBulkExportCSV = async () => {
+    if (selectedDocuments.size === 0) return;
+
+    try {
+      setExportingCSV(true);
+      
+      // Get all selected documents that are processed
+      const selectedDocs = documents.filter(
+        (doc) => doc.id && selectedDocuments.has(doc.id) && doc.status === 'processed' && doc.pythonJobId
+      );
+
+      if (selectedDocs.length === 0) {
+        alert('No processed documents selected. Please select documents that have been processed.');
+        return;
+      }
+
+      // Export each document as CSV using QuickBooks format (row-based) for better combination
+      const csvPromises = selectedDocs.map(async (doc) => {
+        try {
+          const blob = await documentAPI.exportCSV(doc.id!, 'quickbooks', false);
+          
+          // Check if blob is actually an error response
+          if (blob.size === 0) {
+            console.error(`Empty CSV response for document ${doc.id}`);
+            return { error: 'Empty response', filename: doc.originalFileName };
+          }
+          
+          const text = await blob.text();
+          
+          // Check if response is an error message
+          if (text.includes('error') || text.includes('Error') || text.includes('failed') || text.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed.error || parsed.message) {
+                console.error(`Error response for document ${doc.id}:`, parsed);
+                return { error: parsed.error || parsed.message, filename: doc.originalFileName };
+              }
+            } catch {
+              // Not JSON, might be HTML error page
+              if (text.length < 200 && (text.includes('error') || text.includes('Error'))) {
+                console.error(`Error in CSV response for document ${doc.id}:`, text);
+                return { error: text, filename: doc.originalFileName };
+              }
+            }
+          }
+          
+          return { csv: text, filename: doc.originalFileName };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`Failed to export document ${doc.id} (${doc.originalFileName}):`, errorMessage);
+          return { error: errorMessage, filename: doc.originalFileName };
+        }
+      });
+
+      const results = await Promise.all(csvPromises);
+      const validResults = results.filter((r) => r && r.csv) as Array<{ filename: string; csv: string }>;
+      const errorResults = results.filter((r) => r && r.error) as Array<{ filename: string; error: string }>;
+
+      if (validResults.length === 0) {
+        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
+        alert(`Failed to export any documents.\n\nErrors:\n${errorDetails || 'Unknown error'}\n\nPlease check the console for more details.`);
+        return;
+      }
+
+      if (errorResults.length > 0) {
+        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
+        console.warn(`Some documents failed to export:\n${errorDetails}`);
+      }
+
+      // Combine CSV data - extract headers from first document and combine rows
+      const csvLines: string[] = [];
+      
+      // Parse first document to get header structure
+      const firstDocLines = validResults[0].csv.split('\n').filter(line => line.trim());
+      if (firstDocLines.length === 0) {
+        alert('Invalid CSV format. Please try again.');
+        return;
+      }
+
+      // Find the header row (first non-empty line that looks like headers)
+      let headerRow = '';
+      let headerIndex = 0;
+      for (let i = 0; i < firstDocLines.length; i++) {
+        const line = firstDocLines[i].trim();
+        // Check if this looks like a header row (contains common CSV headers)
+        if (line.toLowerCase().includes('invoice') || 
+            line.toLowerCase().includes('vendor') || 
+            line.toLowerCase().includes('date') ||
+            line.split(',').length > 3) {
+          headerRow = line;
+          headerIndex = i;
+          break;
+        }
+      }
+
+      // If no clear header found, use first line
+      if (!headerRow && firstDocLines.length > 0) {
+        headerRow = firstDocLines[0];
+        headerIndex = 0;
+      }
+
+      // Add header with document name column
+      csvLines.push(`"Document Name",${headerRow}`);
+
+      // Add data rows from all documents
+      validResults.forEach((result) => {
+        const lines = result.csv.split('\n').filter(line => line.trim());
+        
+        // Find data rows (skip header and empty lines)
+        let foundHeader = false;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          // Skip the header row
+          if (!foundHeader && (line.toLowerCase().includes('invoice') || 
+                               line.toLowerCase().includes('vendor') ||
+                               line === headerRow)) {
+            foundHeader = true;
+            continue;
+          }
+          
+          // Skip "Line Items" section headers
+          if (line.toLowerCase().includes('line items') || 
+              line.toLowerCase() === 'description,quantity,unit price,total') {
+            continue;
+          }
+          
+          // Add data row with document filename
+          if (line && !line.toLowerCase().includes('field') && !line.toLowerCase().includes('value')) {
+            csvLines.push(`"${result.filename}",${line}`);
+          }
+        }
+      });
+
+      // Create combined CSV
+      const finalCSV = csvLines.join('\n');
+
+      // Create and download the file
+      const csvBlob = new Blob([finalCSV], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(csvBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `documents_export_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to export documents';
+      alert(errorMessage);
+    } finally {
+      setExportingCSV(false);
+    }
+  };
+
   const getFileIcon = (fileType: Document['fileType']) => {
     if (fileType === 'pdf') {
       return (
-        <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M4 18h12V6h-4V2H4v16zm-2 1V0h12l4 4v16H2v-1z" />
+        <svg className="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
         </svg>
       );
     }
     return (
-      <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
       </svg>
     );
@@ -92,21 +431,31 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
 
   if (loading && documents.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#00FFD8]"></div>
+      <div className="flex flex-col items-center justify-center py-16">
+        <div className="relative">
+          <div className="w-12 h-12 border-4 border-gray-200 rounded-full"></div>
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+        </div>
+        <p className="mt-4 text-sm text-gray-600">Loading documents...</p>
       </div>
     );
   }
 
   if (error && documents.length === 0) {
     return (
-      <div className="text-center py-12">
-        <p className="text-red-500 mb-4">{error}</p>
+      <div className="flex flex-col items-center justify-center py-16 px-4">
+        <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <p className="text-base font-medium text-gray-900 mb-1">Unable to load documents</p>
+        <p className="text-sm text-gray-500 mb-6 text-center max-w-sm">{error}</p>
         <button
           onClick={() => void fetchDocuments()}
-          className="px-4 py-2 bg-rexcan-dark-blue-primary text-white rounded-lg hover:bg-rexcan-dark-blue-secondary transition-colors"
+          className="px-6 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors shadow-sm hover:shadow-md"
         >
-          Retry
+          Try Again
         </button>
       </div>
     );
@@ -114,62 +463,244 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
 
   if (documents.length === 0) {
     return (
-      <div className="text-center py-12">
-        <p className="text-rexcan-dark-blue-secondary mb-2">No documents uploaded yet</p>
-        <p className="text-sm text-rexcan-dark-blue-secondary/70">
-          Upload your first document to get started
+      <div className="flex flex-col items-center justify-center py-16 px-4">
+        <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mb-4">
+          <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </div>
+        <p className="text-base font-medium text-gray-900 mb-1">No documents yet</p>
+        <p className="text-sm text-gray-500 text-center max-w-sm">
+          Upload your first document to get started with processing
         </p>
       </div>
     );
   }
 
+  const selectedCount = selectedDocuments.size;
+  const allSelected = documents.length > 0 && selectedCount === documents.length;
+  const someSelected = selectedCount > 0 && selectedCount < documents.length;
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-semibold text-rexcan-dark-blue-primary">
-          Your Documents ({pagination.total})
-        </h3>
+    <div className="space-y-6">
+      {/* Header Section - Material Design Style */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-normal text-gray-900 tracking-tight">
+            Documents
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            {pagination.total} {pagination.total === 1 ? 'document' : 'documents'}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {selectedCount > 0 && (
+              <>
+                <span className="text-sm font-medium text-gray-700 px-3 py-1.5 bg-gray-100 rounded-full">
+                  {selectedCount} {selectedCount === 1 ? 'selected' : 'selected'}
+                </span>
+                
+                {/* Export Buttons */}
+                <button
+                  onClick={handleBulkExportJSON}
+                  disabled={exportingJSON || exportingCSV || selectedCount === 0}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                  title="Export selected documents as JSON"
+                >
+                  {exportingJSON ? (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                  Export JSON
+                </button>
+                
+                <button
+                  onClick={handleBulkExportCSV}
+                  disabled={exportingJSON || exportingCSV || selectedCount === 0}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                  title="Export selected documents as CSV"
+                >
+                  {exportingCSV ? (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  )}
+                  Export CSV
+                </button>
+              </>
+            )}
+            
+            {/* Delete Button */}
+            {showBulkDeleteConfirm ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                >
+                  {bulkDeleting ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Deleting...
+                    </span>
+                  ) : (
+                    `Delete ${selectedCount}`
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowBulkDeleteConfirm(false)}
+                  disabled={bulkDeleting}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 active:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting || selectedCount === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-lg transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center gap-2"
+                title={selectedCount === 0 ? 'Select documents to delete' : `Delete ${selectedCount} selected document(s)`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete
+              </button>
+            )}
+          </div>
         <button
           onClick={() => void fetchDocuments()}
-          className="text-sm text-[#00FFD8] hover:text-[#39FF14] transition-colors"
+            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
+            title="Refresh"
         >
-          Refresh
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
         </button>
+        </div>
       </div>
 
-      <div className="grid gap-4">
-        {documents.map((document, index) => (
+      {/* Select All Button - Material Design Style */}
+      {documents.length > 0 && (
+        <div className="flex items-center px-1 py-2 border-b border-gray-200">
+          <button
+            onClick={handleSelectAll}
+            className="flex items-center gap-3 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors -ml-3"
+          >
+            <div className="relative flex items-center justify-center">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(input) => {
+                  if (input) input.indeterminate = someSelected;
+                }}
+                onChange={handleSelectAll}
+                className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+              />
+            </div>
+            <span>
+              {allSelected ? 'Deselect all' : 'Select all'}
+            </span>
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {documents.map((document, index) => {
+          const isSelected = document.id && selectedDocuments.has(document.id);
+          return (
           <div
             key={document.id || `doc-${index}`}
             onClick={() => onDocumentSelect?.(document)}
             className={`
-              bg-white rounded-lg border border-rexcan-dark-blue-secondary/20 p-4
-              hover:border-[#00FFD8]/50 hover:shadow-lg transition-all duration-200
+                bg-white rounded-lg border transition-all duration-200
+                ${isSelected 
+                  ? 'border-blue-500 bg-blue-50 shadow-md' 
+                  : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
+                }
               ${onDocumentSelect ? 'cursor-pointer' : ''}
-            `}
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-start space-x-4 flex-1 min-w-0">
-                <div className="flex-shrink-0 mt-1">
+                ${isSelected ? 'ring-2 ring-blue-200' : ''}
+              `}
+            >
+              <div className="p-4">
+                <div className="flex items-start gap-4">
+                  {/* Checkbox */}
+                  <div
+                    onClick={(e) => handleToggleSelect(document.id!, e)}
+                    className="flex-shrink-0 mt-0.5 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected || false}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        handleToggleSelect(document.id!, e);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+                    />
+                  </div>
+
+                  {/* File Icon */}
+                  <div className="flex-shrink-0">
+                    <div className={`
+                      w-12 h-12 rounded-lg flex items-center justify-center
+                      ${document.fileType === 'pdf' 
+                        ? 'bg-red-50' 
+                        : 'bg-blue-50'
+                      }
+                    `}>
                   {getFileIcon(document.fileType)}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-semibold text-rexcan-dark-blue-primary truncate">
-                    {document.originalFileName}
-                  </h4>
-                  <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-rexcan-dark-blue-secondary">
-                    <span>{formatFileSize(document.fileSize)}</span>
-                    <span>•</span>
-                    <span className="uppercase">{document.fileType}</span>
-                    <span>•</span>
-                    <span>{formatDate(document.createdAt)}</span>
                   </div>
+
+                  {/* Document Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-medium text-gray-900 truncate mb-1">
+                          {document.originalFileName}
+                        </h3>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500">
+                          <span className="flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                            </svg>
+                            {formatFileSize(document.fileSize)}
+                          </span>
+                          <span className="text-gray-300">•</span>
+                          <span className="uppercase font-medium">{document.fileType}</span>
+                          <span className="text-gray-300">•</span>
+                          <span className="flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            {formatDate(document.createdAt)}
+                          </span>
                 </div>
               </div>
-              <div className="flex-shrink-0 ml-4">
+
+                      {/* Status Badge */}
+                      <div className="flex-shrink-0">
                 <span
                   className={`
-                    inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border
+                            inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border
                     ${getStatusColor(document.status)}
                   `}
                 >
@@ -177,25 +708,34 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
                 </span>
               </div>
             </div>
+                  </div>
+                </div>
+
+                {/* Error Message */}
             {document.errorMessage && (
-              <div className="mt-3 pt-3 border-t border-red-200">
-                <p className="text-sm text-red-600">{document.errorMessage}</p>
+                  <div className="mt-4 pt-4 border-t border-red-200 flex items-start gap-2">
+                    <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm text-red-700">{document.errorMessage}</p>
               </div>
             )}
           </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
 
       {pagination.hasMore && (
-        <div className="text-center pt-4">
+        <div className="flex justify-center pt-6">
           <button
             onClick={() => {
               setPagination((prev) => ({ ...prev, skip: prev.skip + prev.limit }));
               void fetchDocuments();
             }}
-            className="px-6 py-2 bg-rexcan-dark-blue-primary text-white rounded-lg hover:bg-rexcan-dark-blue-secondary transition-colors"
+            className="px-6 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors shadow-sm hover:shadow"
           >
-            Load More
+            Load more
           </button>
         </div>
       )}

@@ -314,9 +314,80 @@ export const exportJSON = asyncHandler(
     try {
       const jsonBlob = await pythonAPIService.exportJSON(document.pythonJobId);
 
-      // Convert blob to buffer
-      const arrayBuffer = await jsonBlob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      // Convert blob to text and parse JSON
+      const jsonText = await jsonBlob.text();
+      let exportData = JSON.parse(jsonText);
+
+      // Merge with latest database data (especially line items which may have been updated)
+      if (document.extractedData) {
+        // Update fields from database if they exist
+        if (document.extractedData.invoiceNumber) {
+          exportData.invoice_id = document.extractedData.invoiceNumber;
+        }
+        if (document.extractedData.vendorName) {
+          exportData.vendor_name = document.extractedData.vendorName;
+        }
+        if (document.extractedData.vendorId) {
+          exportData.vendor_id = document.extractedData.vendorId;
+        }
+        if (document.extractedData.invoiceDate) {
+          exportData.invoice_date = document.extractedData.invoiceDate;
+        }
+        if (document.extractedData.dueDate) {
+          exportData.due_date = document.extractedData.dueDate;
+        }
+        if (document.extractedData.totalAmount !== undefined) {
+          exportData.total_amount = document.extractedData.totalAmount;
+        }
+        if (document.extractedData.amountSubtotal !== undefined) {
+          exportData.amount_subtotal = document.extractedData.amountSubtotal;
+        }
+        if (document.extractedData.amountTax !== undefined) {
+          exportData.amount_tax = document.extractedData.amountTax;
+        }
+        if (document.extractedData.currency) {
+          exportData.currency = document.extractedData.currency;
+        }
+
+        // Merge line items from database (they are the source of truth after user edits)
+        if (document.extractedData.lineItems && document.extractedData.lineItems.length > 0) {
+          exportData.line_items = document.extractedData.lineItems.map((item) => {
+            const normalizedItem: {
+              description: string;
+              quantity?: number;
+              unit_price?: number;
+              total?: number;
+            } = {
+              description: item.description || '',
+            };
+
+            // Normalize quantity: default to 1 if unit_price exists but quantity is missing
+            if (item.unitPrice !== undefined && item.unitPrice !== null) {
+              normalizedItem.unit_price = item.unitPrice;
+              normalizedItem.quantity = item.quantity !== undefined && item.quantity !== null 
+                ? item.quantity 
+                : 1; // Default to 1 if missing
+            } else if (item.quantity !== undefined && item.quantity !== null) {
+              normalizedItem.quantity = item.quantity;
+            }
+
+            // Calculate total if quantity and unit_price exist but total is missing
+            if (normalizedItem.quantity !== undefined && normalizedItem.unit_price !== undefined) {
+              normalizedItem.total = item.total !== undefined && item.total !== null
+                ? item.total
+                : normalizedItem.quantity * normalizedItem.unit_price;
+            } else if (item.total !== undefined && item.total !== null) {
+              normalizedItem.total = item.total;
+            }
+
+            return normalizedItem;
+          });
+        }
+      }
+
+      // Convert back to JSON string
+      const mergedJson = JSON.stringify(exportData, null, 2);
+      const buffer = Buffer.from(mergedJson, 'utf-8');
 
       // Set headers for JSON download
       res.setHeader('Content-Type', 'application/json');

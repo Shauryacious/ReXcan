@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 
 import { documentAPI } from '../services/document.api';
+import { invoiceAPI } from '../services/invoice.api';
 import type { LineItem } from '../services/invoice.api';
 import type { Document, ExtractedData } from '../types/document.types';
 
@@ -15,9 +16,10 @@ interface DocumentDetailsModalProps {
   document: Document | null;
   isOpen: boolean;
   onClose: () => void;
+  onDocumentDeleted?: () => void;
 }
 
-const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetailsModalProps) => {
+const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDeleted }: DocumentDetailsModalProps) => {
   const [imageError, setImageError] = useState(false);
   const [pdfError, setPdfError] = useState(false);
   const [fileUrl, setFileUrl] = useState<string>('');
@@ -26,6 +28,20 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetail
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [unsavedChanges, setUnsavedChanges] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Track pending changes for auto-save
+  const pendingChangesRef = useRef<{
+    fields?: Partial<ExtractedData>;
+    lineItems?: LineItem[];
+  }>({});
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shouldAutoRefreshRef = useRef(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -181,62 +197,287 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetail
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, documentData?.fileName]); // Only depend on fileName, not entire documentData object
 
+  // Refresh document data from server
+  const refreshDocumentData = useCallback(async () => {
+    const docId = documentData?.id;
+    if (!docId) return;
+    
+    try {
+      setRefreshing(true);
+      const response = await documentAPI.getDocument(docId);
+      
+      if (response.success && response.data?.document) {
+        setDocumentData(response.data.document);
+        // Reset unsaved changes after refresh
+        setUnsavedChanges(false);
+        pendingChangesRef.current = {};
+      }
+    } catch (error) {
+      console.error('Error refreshing document:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [documentData?.id]);
+
   // Update document state when prop changes
   useEffect(() => {
     setDocumentData(doc);
+    // Reset unsaved changes when document changes
+    setUnsavedChanges(false);
+    pendingChangesRef.current = {};
+    shouldAutoRefreshRef.current = false;
   }, [doc]);
+  
+  // Auto-refresh after updates
+  useEffect(() => {
+    if (shouldAutoRefreshRef.current && !saving && !autoSaving && documentData?.id) {
+      shouldAutoRefreshRef.current = false;
+      void refreshDocumentData();
+    }
+  }, [saving, autoSaving, documentData?.id, refreshDocumentData]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
-  // Handle line items update
+  // Map ExtractedData fields to Python service field names
+  const mapToPythonFields = (extractedData: Partial<ExtractedData>): Record<string, string | number | undefined> => {
+    const corrections: Record<string, string | number | undefined> = {};
+    
+    if (extractedData.invoiceNumber !== undefined) {
+      corrections.invoice_id = extractedData.invoiceNumber;
+    }
+    if (extractedData.vendorName !== undefined) {
+      corrections.vendor_name = extractedData.vendorName;
+    }
+    if (extractedData.invoiceDate !== undefined) {
+      corrections.invoice_date = extractedData.invoiceDate;
+    }
+    if (extractedData.dueDate !== undefined) {
+      corrections.due_date = extractedData.dueDate;
+    }
+    if (extractedData.totalAmount !== undefined) {
+      corrections.total_amount = extractedData.totalAmount;
+    }
+    if (extractedData.amountSubtotal !== undefined) {
+      corrections.amount_subtotal = extractedData.amountSubtotal;
+    }
+    if (extractedData.amountTax !== undefined) {
+      corrections.amount_tax = extractedData.amountTax;
+    }
+    if (extractedData.currency !== undefined) {
+      corrections.currency = extractedData.currency;
+    }
+    
+    return corrections;
+  };
+
+  // Save corrections to Python service (human-in-the-loop)
+  const saveCorrections = useCallback(async (fields?: Partial<ExtractedData>, lineItems?: LineItem[], isManual = false) => {
+    if (!documentData?.id || !documentData?.pythonJobId) {
+      console.warn('Cannot save: missing document ID or Python job ID');
+      return;
+    }
+
+    try {
+      if (isManual) {
+      setSaving(true);
+      } else {
+        setAutoSaving(true);
+      }
+      setSaveError(null);
+      setSaveSuccess(false);
+
+      const corrections: Record<string, string | number | undefined> = {};
+      
+      // Map fields to Python service format
+      if (fields) {
+        Object.assign(corrections, mapToPythonFields(fields));
+      }
+      
+      // Note: Line items corrections would need to be handled separately
+      // For now, we'll save them via documentAPI.updateDocument
+      
+      // Save field corrections to Python service
+      if (Object.keys(corrections).length > 0) {
+        await invoiceAPI.verifyCorrections({
+          documentId: documentData.id,
+          corrections,
+          autoPromote: false,
+        });
+      }
+      
+      // Also update document in database (for line items and other fields)
+      if (fields || lineItems) {
+        const response = await documentAPI.updateDocument(
+          documentData.id,
+          fields,
+          lineItems
+        );
+      
+      if (response.success && response.data?.document) {
+        setDocumentData(response.data.document);
+        }
+      }
+
+      setSaveSuccess(true);
+      setUnsavedChanges(false);
+      setLastSaved(new Date());
+      pendingChangesRef.current = {};
+      
+      // Trigger auto-refresh after save
+      shouldAutoRefreshRef.current = true;
+      
+      setTimeout(() => {
+        setSaveSuccess(false);
+      }, 3000);
+    } catch (error) {
+      console.error('Error saving corrections:', error);
+      setSaveError(error instanceof Error ? error.message : 'Failed to save corrections');
+      setTimeout(() => setSaveError(null), 5000);
+    } finally {
+      if (isManual) {
+      setSaving(false);
+      } else {
+        setAutoSaving(false);
+      }
+    }
+  }, [documentData]);
+
+  // Auto-save with debouncing
+  useEffect(() => {
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    if (unsavedChanges && (pendingChangesRef.current.fields || pendingChangesRef.current.lineItems)) {
+      autoSaveTimeoutRef.current = setTimeout(() => {
+        saveCorrections(
+          pendingChangesRef.current.fields,
+          pendingChangesRef.current.lineItems,
+          false
+        );
+      }, 2000); // Auto-save after 2 seconds of inactivity
+    }
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [unsavedChanges, saveCorrections]);
+
+  // Manual save handler
+  const handleManualSave = async () => {
+    await saveCorrections(
+      pendingChangesRef.current.fields,
+      pendingChangesRef.current.lineItems,
+      true
+    );
+  };
+
+  // Calculate totals from line items
+  const calculateTotalsFromLineItems = useCallback((lineItems: LineItem[]) => {
+    const subtotal = lineItems.reduce((sum, item) => {
+      const itemTotal = item.total ?? (item.quantity && item.unit_price ? item.quantity * item.unit_price : 0);
+      return sum + (itemTotal || 0);
+    }, 0);
+    
+    const taxAmount = documentData?.extractedData?.amountTax || 0;
+    const totalAmount = subtotal + taxAmount;
+    
+    return { subtotal, totalAmount };
+  }, [documentData?.extractedData?.amountTax]);
+
+  // Handle line items update (with auto-save)
   const handleLineItemsUpdate = async (lineItems: LineItem[]) => {
     if (!documentData?.id) return;
 
-    try {
-      setSaving(true);
-      setSaveError(null);
-      setSaveSuccess(false);
+    // Calculate totals from line items
+    const { subtotal, totalAmount } = calculateTotalsFromLineItems(lineItems);
 
-      const response = await documentAPI.updateDocument(documentData.id, undefined, lineItems);
-      
-      if (response.success && response.data?.document) {
-        setDocumentData(response.data.document);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
-      } else {
-        throw new Error(response.message || 'Failed to update line items');
-      }
-    } catch (error) {
-      console.error('Error updating line items:', error);
-      setSaveError(error instanceof Error ? error.message : 'Failed to update line items');
-      setTimeout(() => setSaveError(null), 5000);
-    } finally {
-      setSaving(false);
+    // Store changes for auto-save
+    pendingChangesRef.current.lineItems = lineItems;
+    // Also update calculated totals
+    pendingChangesRef.current.fields = {
+      ...pendingChangesRef.current.fields,
+      amountSubtotal: subtotal,
+      totalAmount: totalAmount,
+    };
+    setUnsavedChanges(true);
+    
+    // Also update local state immediately for UI responsiveness
+    if (documentData.extractedData) {
+      setDocumentData({
+        ...documentData,
+        extractedData: {
+          ...documentData.extractedData,
+          lineItems: lineItems.map(item => ({
+            description: item.description || '',
+            quantity: item.quantity ?? undefined,
+            unitPrice: item.unit_price ?? undefined,
+            total: item.total ?? undefined, // Use 'total' to match schema
+          })),
+          amountSubtotal: subtotal,
+          totalAmount: totalAmount,
+        },
+      });
     }
   };
 
-  // Handle extracted data fields update
+  // Handle extracted data fields update (with auto-save)
   const handleFieldsUpdate = async (extractedData: Partial<ExtractedData>) => {
     if (!documentData?.id) return;
 
-    try {
-      setSaving(true);
-      setSaveError(null);
-      setSaveSuccess(false);
+    // Store changes for auto-save
+    pendingChangesRef.current.fields = {
+      ...pendingChangesRef.current.fields,
+      ...extractedData,
+    };
+    setUnsavedChanges(true);
+    
+    // Also update local state immediately for UI responsiveness
+    if (documentData.extractedData) {
+      setDocumentData({
+        ...documentData,
+        extractedData: {
+          ...documentData.extractedData,
+          ...extractedData,
+        },
+      });
+    }
+  };
 
-      const response = await documentAPI.updateDocument(documentData.id, extractedData);
+  // Handle document deletion
+  const handleDelete = async () => {
+    if (!documentData?.id) return;
+
+    if (!showDeleteConfirm) {
+      setShowDeleteConfirm(true);
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      const response = await documentAPI.deleteDocument(documentData.id);
       
-      if (response.success && response.data?.document) {
-        setDocumentData(response.data.document);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
+      if (response.success) {
+        onDocumentDeleted?.();
+        onClose();
       } else {
-        throw new Error(response.message || 'Failed to update fields');
+        throw new Error(response.message || 'Failed to delete document');
       }
     } catch (error) {
-      console.error('Error updating fields:', error);
-      setSaveError(error instanceof Error ? error.message : 'Failed to update fields');
-      setTimeout(() => setSaveError(null), 5000);
+      console.error('Error deleting document:', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete document');
+      setShowDeleteConfirm(false);
     } finally {
-      setSaving(false);
+      setDeleting(false);
     }
   };
 
@@ -267,29 +508,125 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetail
             </p>
           </div>
           <div className="flex items-center space-x-2 ml-4">
-            {saveSuccess && (
-              <span className="text-sm text-green-600 font-medium flex items-center gap-1">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {/* Save Status Indicators */}
+            {autoSaving && (
+              <span className="text-xs text-blue-600 font-medium flex items-center gap-1">
+                <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-300 border-t-blue-600"></div>
+                Auto-saving...
+              </span>
+            )}
+            {saveSuccess && !autoSaving && (
+              <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                Saved
+                Saved{lastSaved && ` at ${lastSaved.toLocaleTimeString()}`}
+              </span>
+            )}
+            {unsavedChanges && !saving && !autoSaving && (
+              <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Unsaved changes
               </span>
             )}
             {saveError && (
-              <span className="text-sm text-red-600 font-medium flex items-center gap-1">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
                 {saveError}
               </span>
             )}
-            {saving && (
-              <span className="text-sm text-gray-600 font-medium flex items-center gap-1">
-                <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-blue-600"></div>
-                Saving...
-              </span>
+            
+            {/* Refresh Button */}
+            {documentData.id && (
+              <button
+                onClick={() => void refreshDocumentData()}
+                disabled={refreshing || saving || autoSaving}
+                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh document data"
+              >
+                {refreshing ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-600"></div>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+              </button>
             )}
-            {documentData.id && <ExportButton documentId={documentData.id} filename={documentData.originalFileName} />}
+            
+            {/* Manual Save Button */}
+            {documentData.pythonJobId && (
+              <button
+                onClick={handleManualSave}
+                disabled={saving || autoSaving || !unsavedChanges}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                title={unsavedChanges ? "Save changes manually" : "No changes to save"}
+              >
+                {saving ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                    </svg>
+                    Save
+                  </>
+                )}
+              </button>
+            )}
+            
+            {documentData.id && (
+              <ExportButton
+                documentId={documentData.id}
+                filename={documentData.originalFileName}
+                documentStatus={documentData.status}
+                pythonJobId={documentData.pythonJobId}
+              />
+            )}
+            {showDeleteConfirm ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleting ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="p-2 rounded-full hover:bg-red-50 transition-colors text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete document"
+                aria-label="Delete document"
+              >
+                {deleting ? (
+                  <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                )}
+              </button>
+            )}
           <button
             onClick={onClose}
               className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900"

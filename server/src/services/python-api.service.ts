@@ -323,14 +323,42 @@ class PythonAPIService {
     skipSafetyCheck: boolean = false
   ): Promise<Blob> {
     const url = `${this.config.baseUrl}/export/csv?job_id=${jobId}&erp_type=${erpType}&skip_safety_check=${skipSafetyCheck}`;
-    const response = await fetch(url);
+    
+    try {
+      const response = await fetch(url);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Export failed (${response.status}): ${errorText}`);
+      if (!response.ok) {
+        let errorText = '';
+        try {
+          errorText = await response.text();
+        } catch (e) {
+          errorText = `Failed to read error response: ${e}`;
+        }
+        
+        const errorMessage = `CSV export failed (${response.status}): ${errorText}`;
+        logger.error(`Python API exportCSV error for job ${jobId}:`, {
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+          url,
+          erpType,
+          skipSafetyCheck,
+        });
+        throw new Error(errorMessage);
+      }
+
+      return response.blob();
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error(`Python API exportCSV exception for job ${jobId}:`, {
+          error: error.message,
+          stack: error.stack,
+          url,
+        });
+        throw error;
+      }
+      throw new Error(`Unknown error during CSV export: ${String(error)}`);
     }
-
-    return response.blob();
   }
 
   /**
@@ -338,14 +366,40 @@ class PythonAPIService {
    */
   async exportJSON(jobId: string): Promise<Blob> {
     const url = `${this.config.baseUrl}/export/json?job_id=${jobId}`;
-    const response = await fetch(url);
+    
+    try {
+      const response = await fetch(url);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`JSON export failed (${response.status}): ${errorText}`);
+      if (!response.ok) {
+        let errorText = '';
+        try {
+          errorText = await response.text();
+        } catch (e) {
+          errorText = `Failed to read error response: ${e}`;
+        }
+        
+        const errorMessage = `JSON export failed (${response.status}): ${errorText}`;
+        logger.error(`Python API exportJSON error for job ${jobId}:`, {
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+          url,
+        });
+        throw new Error(errorMessage);
+      }
+
+      return response.blob();
+    } catch (error) {
+      if (error instanceof Error) {
+        logger.error(`Python API exportJSON exception for job ${jobId}:`, {
+          error: error.message,
+          stack: error.stack,
+          url,
+        });
+        throw error;
+      }
+      throw new Error(`Unknown error during JSON export: ${String(error)}`);
     }
-
-    return response.blob();
   }
 
   /**

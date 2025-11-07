@@ -2,6 +2,8 @@ import { Document, DocumentType, DocumentStatus, IDocument } from '../models/Doc
 import { addDocumentToQueue, DocumentJobData } from '../config/queue.js';
 import { logger } from '../utils/logger.js';
 import path from 'path';
+import fs from 'fs/promises';
+import { STORAGE_BASE_PATH } from '../config/storage.js';
 
 export interface CreateDocumentInput {
   userId: string;
@@ -27,11 +29,11 @@ export const createDocument = async (
     });
 
     await document.save();
-    logger.info(`Document created: ${document._id}`);
+    logger.info(`Document created: ${(document._id as { toString: () => string }).toString()}`);
 
     // Add to processing queue
     const jobData: DocumentJobData = {
-      documentId: document._id.toString(),
+      documentId: (document._id as { toString: () => string }).toString(),
       userId: input.userId,
       filePath: input.filePath,
       fileType: input.fileType === DocumentType.PDF ? 'pdf' : 'image',
@@ -97,6 +99,23 @@ export const getUserDocuments = async (
   }
 };
 
+export const getDocumentsByBatchId = async (
+  batchId: string,
+  userId: string
+): Promise<IDocument[]> => {
+  try {
+    const documents = await Document.find({
+      batchId,
+      userId,
+    }).sort({ createdAt: -1 });
+
+    return documents;
+  } catch (error) {
+    logger.error('Error fetching documents by batch ID:', error);
+    throw error;
+  }
+};
+
 export const updateDocumentStatus = async (
   documentId: string,
   status: DocumentStatus,
@@ -136,6 +155,88 @@ export const updateDocumentExtractedData = async (
     return document;
   } catch (error) {
     logger.error('Error updating document extracted data:', error);
+    throw error;
+  }
+};
+
+export const deleteDocument = async (
+  documentId: string,
+  userId: string
+): Promise<boolean> => {
+  try {
+    // Find document and verify ownership
+    const document = await Document.findOne({
+      _id: documentId,
+      userId,
+    });
+
+    if (!document) {
+      logger.warn(`Document not found or access denied: ${documentId} for user: ${userId}`);
+      return false;
+    }
+
+    // Delete the file from storage
+    try {
+      // Try multiple path resolution strategies (same as in serveUploadedFile)
+      let filePath: string | null = null;
+      const triedPaths: string[] = [];
+
+      // Strategy 1: Use filePath as stored (might be absolute from multer)
+      triedPaths.push(document.filePath);
+      try {
+        await fs.access(document.filePath);
+        filePath = document.filePath;
+      } catch {
+        // Strategy 2: Join with STORAGE_BASE_PATH (if relative)
+        const relativePath = path.join(STORAGE_BASE_PATH, document.filePath);
+        triedPaths.push(relativePath);
+        try {
+          await fs.access(relativePath);
+          filePath = relativePath;
+        } catch {
+          // Strategy 3: If filePath contains 'uploads', use it directly with STORAGE_BASE_PATH
+          if (document.filePath.includes('uploads')) {
+            const uploadsPath = path.join(STORAGE_BASE_PATH, document.filePath);
+            triedPaths.push(uploadsPath);
+            try {
+              await fs.access(uploadsPath);
+              filePath = uploadsPath;
+            } catch {
+              // Strategy 4: Extract just the filename and reconstruct path
+              const fileName = path.basename(document.filePath);
+              const fileType = document.fileType === DocumentType.PDF ? 'pdfs' : 'images';
+              const reconstructedPath = path.join(STORAGE_BASE_PATH, 'uploads', fileType, fileName);
+              triedPaths.push(reconstructedPath);
+              try {
+                await fs.access(reconstructedPath);
+                filePath = reconstructedPath;
+              } catch {
+                filePath = null;
+              }
+            }
+          }
+        }
+      }
+
+      if (filePath) {
+        await fs.unlink(filePath);
+        logger.info(`Deleted file: ${filePath} for document: ${documentId}`);
+      } else {
+        logger.warn(`File not found for document ${documentId}. Tried paths: ${triedPaths.join(', ')}`);
+        // Continue with database deletion even if file is missing
+      }
+    } catch (fileError) {
+      logger.error(`Error deleting file for document ${documentId}:`, fileError);
+      // Continue with database deletion even if file deletion fails
+    }
+
+    // Delete document from database
+    await Document.findByIdAndDelete(documentId);
+    logger.info(`Deleted document: ${documentId} for user: ${userId}`);
+
+    return true;
+  } catch (error) {
+    logger.error('Error deleting document:', error);
     throw error;
   }
 };
