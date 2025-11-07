@@ -36,15 +36,18 @@ export interface IDocument extends MongooseDocument {
   extractedData?: {
     invoiceNumber?: string;
     vendorName?: string;
+    vendorId?: string;
     invoiceDate?: string;
     dueDate?: string;
     totalAmount?: number;
+    amountSubtotal?: number;
+    amountTax?: number;
     currency?: string;
     lineItems?: Array<{
       description?: string;
       quantity?: number;
       unitPrice?: number;
-      amount?: number;
+      total?: number;
     }>;
     taxInformation?: {
       taxRate?: number;
@@ -52,7 +55,28 @@ export interface IDocument extends MongooseDocument {
     };
     paymentTerms?: string;
     rawExtraction?: Record<string, unknown>;
+    // Python service fields
+    fieldConfidences?: Record<string, number>;
+    fieldReasons?: Record<string, string>;
+    fieldSources?: Record<string, string>;
+    timings?: Record<string, number>;
+    llmUsed?: boolean;
+    llmFields?: string[];
+    dedupeHash?: string;
+    isDuplicate?: boolean;
+    isNearDuplicate?: boolean;
+    nearDuplicates?: Array<{ job_id: string; similarity: number }>;
+    arithmeticMismatch?: boolean;
+    needsHumanReview?: boolean;
+    llmCallReason?: string;
+    ocrBlocks?: Array<{
+      text: string;
+      bbox: number[];
+      confidence: number;
+      engine: string;
+    }>;
   };
+  pythonJobId?: string; // Job ID from Python service
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,15 +138,18 @@ const documentSchema = new Schema<IDocument>(
     extractedData: {
       invoiceNumber: String,
       vendorName: String,
+      vendorId: String,
       invoiceDate: String,
       dueDate: String,
       totalAmount: Number,
+      amountSubtotal: Number,
+      amountTax: Number,
       currency: String,
       lineItems: [{
         description: String,
         quantity: Number,
         unitPrice: Number,
-        amount: Number,
+        total: Number,
       }],
       taxInformation: {
         taxRate: Number,
@@ -130,7 +157,23 @@ const documentSchema = new Schema<IDocument>(
       },
       paymentTerms: String,
       rawExtraction: Schema.Types.Mixed,
+      // Python service fields
+      fieldConfidences: Schema.Types.Mixed,
+      fieldReasons: Schema.Types.Mixed,
+      fieldSources: Schema.Types.Mixed,
+      timings: Schema.Types.Mixed,
+      llmUsed: Boolean,
+      llmFields: [String],
+      dedupeHash: String,
+      isDuplicate: Boolean,
+      isNearDuplicate: Boolean,
+      nearDuplicates: Schema.Types.Mixed,
+      arithmeticMismatch: Boolean,
+      needsHumanReview: Boolean,
+      llmCallReason: String,
+      ocrBlocks: Schema.Types.Mixed,
     },
+    pythonJobId: String,
   },
   {
     timestamps: true,
@@ -138,6 +181,12 @@ const documentSchema = new Schema<IDocument>(
       transform: (_doc: unknown, ret: Record<string, unknown>) => {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete ret.__v;
+        // Transform _id to id for frontend compatibility
+        if (ret._id) {
+          ret.id = ret._id;
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete ret._id;
+        }
         return ret;
       },
     },

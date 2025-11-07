@@ -138,9 +138,9 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect }: DocumentsListProps)
       </div>
 
       <div className="grid gap-4">
-        {documents.map((document) => (
+        {documents.map((document, index) => (
           <div
-            key={document.id}
+            key={document.id || `doc-${index}`}
             onClick={() => onDocumentSelect?.(document)}
             className={`
               bg-white rounded-lg border border-rexcan-dark-blue-secondary/20 p-4

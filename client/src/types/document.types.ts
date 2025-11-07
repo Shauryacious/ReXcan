@@ -9,6 +9,8 @@ export interface ExtractedData {
   invoiceDate?: string;
   dueDate?: string;
   totalAmount?: number;
+  amountSubtotal?: number;
+  amountTax?: number;
   currency?: string;
   lineItems?: Array<{
     description?: string;
@@ -22,6 +24,20 @@ export interface ExtractedData {
   };
   paymentTerms?: string;
   rawExtraction?: Record<string, unknown>;
+  // Python service fields
+  fieldConfidences?: Record<string, number>;
+  fieldReasons?: Record<string, string>;
+  fieldSources?: Record<string, string>;
+  timings?: Record<string, number>;
+  llmUsed?: boolean;
+  llmFields?: string[];
+  dedupeHash?: string;
+  isDuplicate?: boolean;
+  isNearDuplicate?: boolean;
+  nearDuplicates?: Array<{ job_id: string; similarity: number }>;
+  arithmeticMismatch?: boolean;
+  needsHumanReview?: boolean;
+  llmCallReason?: string;
 }
 
 export interface Document {
@@ -32,6 +48,7 @@ export interface Document {
   filePath: string;
   fileType: DocumentType;
   mimeType: string;
+  pythonJobId?: string; // Python service job ID for status tracking
   fileSize: number;
   status: DocumentStatus;
   queueJobId?: string;

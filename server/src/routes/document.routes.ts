@@ -4,6 +4,7 @@ import {
   uploadDocument,
   getDocuments,
   getDocument,
+  updateDocument,
 } from '../controllers/document.controller.js';
 import { authenticate } from '../middlewares/authenticate.js';
 import { uploadSingle } from '../middlewares/upload.js';
@@ -47,6 +48,10 @@ router.get('/', getDocuments);
 
 // Get single document by ID
 router.get('/:id', getDocument);
+
+// Update document extracted data
+router.patch('/:id', updateDocument);
+router.put('/:id', updateDocument);
 
 export { router as documentRoutes };
 

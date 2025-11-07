@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { createDocument, getUserDocuments, getDocumentById } from '../services/document.service.js';
+import { createDocument, getUserDocuments, getDocumentById, updateDocumentExtractedData } from '../services/document.service.js';
 import { DocumentType } from '../models/Document.model.js';
 import { ApiResponseHelper } from '../utils/apiResponse.js';
 import { logger } from '../utils/logger.js';
@@ -115,6 +115,72 @@ export const getDocument = asyncHandler(
       res,
       { document },
       'Document fetched successfully'
+    );
+  }
+);
+
+// Update document extracted data
+export const updateDocument = asyncHandler(
+  async (req: AuthRequest, res: Response): Promise<Response> => {
+    if (!req.user) {
+      return ApiResponseHelper.unauthorized(res, 'User not authenticated');
+    }
+
+    const userId = (req.user as { _id: { toString: () => string } })._id.toString();
+    const { id } = req.params;
+    const { extractedData, lineItems } = req.body;
+
+    // Get document to verify ownership
+    const document = await getDocumentById(id, userId);
+    if (!document) {
+      return ApiResponseHelper.notFound(res, 'Document not found');
+    }
+
+    // Prepare updated extracted data
+    const currentExtractedData = document.extractedData || {};
+    let updatedExtractedData = { ...currentExtractedData };
+
+    // If lineItems are provided, update them
+    if (lineItems && Array.isArray(lineItems)) {
+      // Convert LineItem format to internal format
+      updatedExtractedData.lineItems = lineItems.map((item: any) => ({
+        description: item.description || '',
+        quantity: item.quantity ?? undefined,
+        unitPrice: item.unit_price ?? undefined,
+        amount: item.total ?? undefined,
+      }));
+    }
+
+    // If other extracted data fields are provided, merge them
+    if (extractedData && typeof extractedData === 'object') {
+      updatedExtractedData = {
+        ...updatedExtractedData,
+        ...extractedData,
+        // Preserve lineItems if not being updated separately
+        lineItems: extractedData.lineItems 
+          ? extractedData.lineItems.map((item: any) => ({
+              description: item.description || '',
+              quantity: item.quantity ?? undefined,
+              unitPrice: item.unitPrice ?? item.unit_price ?? undefined,
+              amount: item.amount ?? item.total ?? undefined,
+            }))
+          : updatedExtractedData.lineItems,
+      };
+    }
+
+    // Update document
+    const updatedDocument = await updateDocumentExtractedData(id, updatedExtractedData);
+
+    if (!updatedDocument) {
+      return ApiResponseHelper.internalError(res, 'Failed to update document');
+    }
+
+    logger.info(`Document extracted data updated: ${id} by user: ${userId}`);
+
+    return ApiResponseHelper.success(
+      res,
+      { document: updatedDocument },
+      'Document updated successfully'
     );
   }
 );

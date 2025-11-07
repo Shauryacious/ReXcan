@@ -301,7 +301,7 @@ def _convert_docai_to_blocks(docai_result: dict, page_width: float = 1000, page_
     return blocks
 
 
-def extract_text(file_path: Path, ocr_engine: Optional[OCREngine] = None, use_cache: bool = True) -> Tuple[List[OCRBlock], float]:
+def extract_text(file_path: Path, ocr_engine: Optional[OCREngine] = None, use_cache: bool = True, log_callback: Optional[callable] = None) -> Tuple[List[OCRBlock], float]:
     """Orchestrate text extraction: pdfplumber → EasyOCR/Tesseract (primary) → Document AI fallback.
     
     Args:
@@ -337,20 +337,32 @@ def extract_text(file_path: Path, ocr_engine: Optional[OCREngine] = None, use_ca
     
     # Step 1: Try pdfplumber first (fast, works for text-based PDFs)
     if not is_image:
-        print("    → Trying pdfplumber (text-layer extraction)...", end="", flush=True)
+        msg = "Trying pdfplumber (text-layer extraction)..."
+        print(f"    → {msg}", end="", flush=True)
+        if log_callback:
+            log_callback(msg, "info")
         try:
             blocks, pdf_time = timeit("pdfplumber", extract_with_pdfplumber, file_path)
             total_text_length = sum(len(b.text) for b in blocks) if blocks else 0
-            print(f" ✓ ({total_text_length} characters, {len(blocks)} blocks, {pdf_time:.2f}s)")
+            success_msg = f"✓ pdfplumber ({total_text_length} characters, {len(blocks)} blocks, {pdf_time:.2f}s)"
+            print(f" {success_msg}")
+            if log_callback:
+                log_callback(success_msg, "success")
         except Exception as e:
-            print(f" ✗ ({e})")
+            error_msg = f"✗ pdfplumber failed: {e}"
+            print(f" {error_msg}")
+            if log_callback:
+                log_callback(error_msg, "error")
             blocks = []
             total_text_length = 0
             pdf_time = 0.0
     
     # Step 2: If pdfplumber found little/no text, use local OCR (PRIMARY: EasyOCR/Tesseract)
     if is_image or total_text_length < 50 or len(blocks) < 5:  # Threshold: need some text
-        print("    → Using local OCR (Tesseract/EasyOCR - primary)...", end="", flush=True)
+        msg = "Using local OCR (Tesseract/EasyOCR - primary)..."
+        print(f"    → {msg}", end="", flush=True)
+        if log_callback:
+            log_callback(msg, "info")
         if ocr_engine is None:
             ocr_engine = OCREngine()
         

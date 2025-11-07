@@ -1,5 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+import { documentAPI } from '../services/document.api';
+import type { LineItem } from '../services/invoice.api';
 import type { Document, ExtractedData } from '../types/document.types';
+
+import ArithmeticMismatchWarning from './ArithmeticMismatchWarning';
+import DuplicateDetectionAlert from './DuplicateDetectionAlert';
+import EditableFieldsForm from './EditableFieldsForm';
+import EditableLineItemsTable from './EditableLineItemsTable';
+import ExportButton from './ExportButton';
+import ProcessingStatusLog from './ProcessingStatusLog';
 
 interface DocumentDetailsModalProps {
   document: Document | null;
@@ -8,65 +18,285 @@ interface DocumentDetailsModalProps {
 }
 
 const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetailsModalProps) => {
+  const [imageError, setImageError] = useState(false);
+  const [pdfError, setPdfError] = useState(false);
+  const [fileUrl, setFileUrl] = useState<string>('');
+  const [loadingFile, setLoadingFile] = useState(true);
+  const [documentData, setDocumentData] = useState<Document | null>(doc);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
-      document.documentElement.style.overflow = 'hidden';
+      window.document.documentElement.style.overflow = 'hidden';
     } else {
-      document.documentElement.style.overflow = 'unset';
+      window.document.documentElement.style.overflow = 'unset';
     }
     return () => {
-      document.documentElement.style.overflow = 'unset';
+      window.document.documentElement.style.overflow = 'unset';
     };
   }, [isOpen]);
 
-  if (!isOpen || !doc) return null;
+  // Clean up blob URL when component unmounts or modal closes
+  useEffect(() => {
+    return () => {
+      // Clean up object URL if created
+      if (fileUrl && fileUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(fileUrl);
+        } catch (e) {
+          // Ignore errors when revoking (URL might already be revoked)
+          console.debug('Error revoking blob URL on unmount:', e);
+        }
+      }
+    };
+  }, [fileUrl]);
 
-  const formatCurrency = (amount: number | undefined, currency: string | undefined): string => {
-    if (amount === undefined || amount === null) return 'N/A';
-    const currencySymbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : currency || '$';
-    return `${currencySymbol}${amount.toFixed(2)}`;
-  };
+  // Fetch file with authentication and create object URL
+  useEffect(() => {
+    if (!isOpen || !doc) {
+      setFileUrl('');
+      setLoadingFile(false);
+      setImageError(false);
+      setPdfError(false);
+      return;
+    }
 
-  const formatDate = (dateString: string | undefined): string => {
-    if (!dateString) return 'N/A';
+    if (!documentData) {
+      setFileUrl('');
+      setLoadingFile(false);
+      setImageError(false);
+      setPdfError(false);
+      return;
+    }
+
+    // Always fetch fresh - don't rely on cached blob URLs as they can become invalid
+    let cancelled = false;
+    let currentBlobUrl: string | null = null;
+    
+    // Revoke previous blob URL if it exists
+    if (fileUrl && fileUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(fileUrl);
+      } catch (e) {
+        console.debug('Error revoking previous blob URL:', e);
+      }
+    }
+    
+    const fetchFile = async () => {
+      try {
+        setLoadingFile(true);
+        setImageError(false);
+        setPdfError(false);
+        
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1';
+        const token = localStorage.getItem('token');
+        
+        if (!token) {
+          throw new Error('No authentication token found');
+        }
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout for large files
+        
+        const response = await fetch(`${baseUrl}/invoices/uploads/${documentData.fileName}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+        }
+
+        const blob = await response.blob();
+        
+        if (cancelled) {
+          return;
+        }
+        
+        // Verify blob is not empty
+        if (blob.size === 0) {
+          throw new Error('Received empty file');
+        }
+        
+        // Verify blob type matches expected type
+        if (documentData.fileType === 'pdf' && !blob.type.includes('pdf')) {
+          console.warn(`Expected PDF but got ${blob.type}`);
+        }
+        
+        const objectUrl = URL.createObjectURL(blob);
+        currentBlobUrl = objectUrl;
+        
+        if (!cancelled) {
+          setFileUrl(objectUrl);
+        } else {
+          // Clean up if cancelled
+          URL.revokeObjectURL(objectUrl);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.error('File fetch timeout');
+          setImageError(true);
+          setPdfError(true);
+        } else {
+          console.error('Error loading file:', error);
+          setImageError(true);
+          setPdfError(true);
+        }
+        setFileUrl(''); // Clear invalid URL
+      } finally {
+        if (!cancelled) {
+          setLoadingFile(false);
+        }
+      }
+    };
+
+    void fetchFile();
+    
+    // Cleanup function - revoke blob URL when component unmounts or dependencies change
+    return () => {
+      cancelled = true;
+      // Revoke blob URL if it was created
+      if (currentBlobUrl) {
+        try {
+          URL.revokeObjectURL(currentBlobUrl);
+        } catch (e) {
+          console.debug('Error revoking blob URL in cleanup:', e);
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, documentData?.fileName]); // Only depend on fileName, not entire documentData object
+
+  // Update document state when prop changes
+  useEffect(() => {
+    setDocumentData(doc);
+  }, [doc]);
+
+  // Handle line items update
+  const handleLineItemsUpdate = async (lineItems: LineItem[]) => {
+    if (!documentData?.id) return;
+
     try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      });
-    } catch {
-      return dateString;
+      setSaving(true);
+      setSaveError(null);
+      setSaveSuccess(false);
+
+      const response = await documentAPI.updateDocument(documentData.id, undefined, lineItems);
+      
+      if (response.success && response.data?.document) {
+        setDocumentData(response.data.document);
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+      } else {
+        throw new Error(response.message || 'Failed to update line items');
+      }
+    } catch (error) {
+      console.error('Error updating line items:', error);
+      setSaveError(error instanceof Error ? error.message : 'Failed to update line items');
+      setTimeout(() => setSaveError(null), 5000);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const extractedData: ExtractedData | undefined = doc.extractedData;
+  // Handle extracted data fields update
+  const handleFieldsUpdate = async (extractedData: Partial<ExtractedData>) => {
+    if (!documentData?.id) return;
+
+    try {
+      setSaving(true);
+      setSaveError(null);
+      setSaveSuccess(false);
+
+      const response = await documentAPI.updateDocument(documentData.id, extractedData);
+      
+      if (response.success && response.data?.document) {
+        setDocumentData(response.data.document);
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+      } else {
+        throw new Error(response.message || 'Failed to update fields');
+      }
+    } catch (error) {
+      console.error('Error updating fields:', error);
+      setSaveError(error instanceof Error ? error.message : 'Failed to update fields');
+      setTimeout(() => setSaveError(null), 5000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isOpen || !documentData) return null;
+
+  const extractedData: ExtractedData | undefined = documentData.extractedData;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-lg shadow-2xl max-w-7xl w-full mx-4 max-h-[95vh] overflow-hidden flex flex-col animate-slideUp"
         onClick={(e) => e.stopPropagation()}
+        style={{
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08)'
+        }}
       >
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-rexcan-dark-blue-secondary/20 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-rexcan-dark-blue-primary">
+        {/* Header - Google Material Design Style */}
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-medium text-gray-900 truncate">
               Document Details
             </h2>
-            <p className="text-sm text-rexcan-dark-blue-secondary mt-1">
-              {doc.originalFileName}
+            <p className="text-sm text-gray-500 mt-0.5 truncate">
+              {documentData.originalFileName}
             </p>
           </div>
+          <div className="flex items-center space-x-2 ml-4">
+            {saveSuccess && (
+              <span className="text-sm text-green-600 font-medium flex items-center gap-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Saved
+              </span>
+            )}
+            {saveError && (
+              <span className="text-sm text-red-600 font-medium flex items-center gap-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                {saveError}
+              </span>
+            )}
+            {saving && (
+              <span className="text-sm text-gray-600 font-medium flex items-center gap-1">
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-blue-600"></div>
+                Saving...
+              </span>
+            )}
+            {documentData.id && <ExportButton documentId={documentData.id} filename={documentData.originalFileName} />}
           <button
             onClick={onClose}
-            className="text-rexcan-dark-blue-secondary hover:text-rexcan-dark-blue-primary transition-colors"
+              className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900"
+              aria-label="Close"
           >
             <svg
-              className="w-6 h-6"
+                className="w-5 h-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -80,230 +310,348 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose }: DocumentDetail
             </svg>
           </button>
         </div>
+        </div>
 
-        {/* Content */}
-        <div className="p-6">
-          {/* Document Info */}
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-rexcan-dark-blue-primary mb-3">
-              Document Information
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-rexcan-dark-blue-secondary">Status</p>
-                <p className="font-medium capitalize">{doc.status}</p>
-              </div>
-              <div>
-                <p className="text-sm text-rexcan-dark-blue-secondary">File Type</p>
-                <p className="font-medium uppercase">{doc.fileType}</p>
-              </div>
-              {doc.selectedModel && (
-                <div>
-                  <p className="text-sm text-rexcan-dark-blue-secondary">AI Model Used</p>
-                  <p className="font-medium capitalize">
-                    {doc.selectedModel === 'best' ? 'Best Model (Recommended)' : doc.selectedModel}
-                  </p>
+        {/* Two-column layout: PDF/Image on left, Data on right */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left Side: PDF/Image Preview */}
+          <div className="w-1/2 border-r border-gray-200 bg-gray-50 flex flex-col">
+            <div className="px-6 py-3 border-b border-gray-200 bg-white">
+              <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                Document Preview
+              </h3>
+            </div>
+            <div className="flex-1 overflow-auto p-6 flex items-center justify-center bg-gray-50">
+              {loadingFile ? (
+                <div className="text-center">
+                  <div className="inline-block">
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-blue-600 mx-auto mb-3"></div>
+                  </div>
+                  <p className="text-sm text-gray-600 font-medium">Loading document preview...</p>
+                  <p className="text-xs text-gray-400 mt-1">This may take a few seconds</p>
                 </div>
+              ) : documentData.fileType === 'pdf' ? (
+                !pdfError && fileUrl && fileUrl.startsWith('blob:') ? (
+                  <iframe
+                    src={fileUrl}
+                    className="w-full h-full min-h-[600px] border border-gray-200 rounded bg-white shadow-sm"
+                    title="PDF Preview"
+                    onError={() => {
+                      console.error('PDF iframe load error');
+                      setPdfError(true);
+                      // Clear invalid blob URL
+                      if (fileUrl.startsWith('blob:')) {
+                        try {
+                          URL.revokeObjectURL(fileUrl);
+                        } catch {
+                          // Ignore
+                        }
+                      }
+                      setFileUrl('');
+                    }}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="text-center text-gray-500">
+                    <svg
+                      className="w-12 h-12 mx-auto mb-3 text-gray-300"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+                      />
+                    </svg>
+                    <p className="text-sm text-gray-500">Unable to load PDF preview</p>
+                    {fileUrl && (
+                      <a
+                        href={fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 mt-2 inline-block text-sm font-medium"
+                      >
+                        Open in new tab
+                      </a>
+                    )}
+                  </div>
+                )
+              ) : (
+                !imageError && fileUrl && fileUrl.startsWith('blob:') ? (
+                  <img
+                    src={fileUrl}
+                    alt={documentData.originalFileName}
+                    className="max-w-full max-h-full object-contain rounded shadow-sm border border-gray-200"
+                    onError={() => {
+                      console.error('Image load error');
+                      setImageError(true);
+                      // Clear invalid blob URL
+                      if (fileUrl.startsWith('blob:')) {
+                        try {
+                          URL.revokeObjectURL(fileUrl);
+                        } catch {
+                          // Ignore
+                        }
+                      }
+                      setFileUrl('');
+                    }}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="text-center text-gray-500">
+                    <svg
+                      className="w-12 h-12 mx-auto mb-3 text-gray-300"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      />
+                    </svg>
+                    <p className="text-sm text-gray-500">Unable to load image</p>
+                    {fileUrl && (
+                      <a
+                        href={fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 mt-2 inline-block text-sm font-medium"
+                      >
+                        Open in new tab
+                      </a>
+                    )}
+                  </div>
+                )
               )}
-              <div>
-                <p className="text-sm text-rexcan-dark-blue-secondary">File Size</p>
-                <p className="font-medium">
-                  {(doc.fileSize / 1024).toFixed(2)} KB
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-rexcan-dark-blue-secondary">Uploaded</p>
-                <p className="font-medium">
-                  {new Date(doc.createdAt).toLocaleString()}
-                </p>
-              </div>
             </div>
           </div>
 
-          {/* Extracted Data */}
-          {extractedData ? (
-            <div className="border-t border-rexcan-dark-blue-secondary/20 pt-6">
-              <h3 className="text-lg font-semibold text-rexcan-dark-blue-primary mb-4">
-                Extracted Invoice Data
-              </h3>
-
-              <div className="space-y-6">
-                {/* Basic Information */}
-                <div className="grid grid-cols-2 gap-4">
-                  {extractedData.invoiceNumber && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Invoice Number
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {extractedData.invoiceNumber}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.vendorName && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Vendor Name
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {extractedData.vendorName}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.invoiceDate && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Invoice Date
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {formatDate(extractedData.invoiceDate)}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.dueDate && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Due Date
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {formatDate(extractedData.dueDate)}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.totalAmount !== undefined && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Total Amount
-                      </p>
-                      <p className="font-medium text-lg text-rexcan-dark-blue-primary">
-                        {formatCurrency(extractedData.totalAmount, extractedData.currency)}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.currency && (
-                    <div>
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Currency
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {extractedData.currency}
-                      </p>
-                    </div>
-                  )}
-                  {extractedData.paymentTerms && (
-                    <div className="col-span-2">
-                      <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                        Payment Terms
-                      </p>
-                      <p className="font-medium text-rexcan-dark-blue-primary">
-                        {extractedData.paymentTerms}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Tax Information */}
-                {extractedData.taxInformation && (
-                  <div className="border-t border-rexcan-dark-blue-secondary/20 pt-4">
-                    <h4 className="text-md font-semibold text-rexcan-dark-blue-primary mb-3">
-                      Tax Information
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      {extractedData.taxInformation.taxRate !== undefined && (
-                        <div>
-                          <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                            Tax Rate
-                          </p>
-                          <p className="font-medium text-rexcan-dark-blue-primary">
-                            {extractedData.taxInformation.taxRate}%
-                          </p>
-                        </div>
-                      )}
-                      {extractedData.taxInformation.taxAmount !== undefined && (
-                        <div>
-                          <p className="text-sm text-rexcan-dark-blue-secondary mb-1">
-                            Tax Amount
-                          </p>
-                          <p className="font-medium text-rexcan-dark-blue-primary">
-                            {formatCurrency(
-                              extractedData.taxInformation.taxAmount,
-                              extractedData.currency
-                            )}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Line Items */}
-                {extractedData.lineItems && extractedData.lineItems.length > 0 && (
-                  <div className="border-t border-rexcan-dark-blue-secondary/20 pt-4">
-                    <h4 className="text-md font-semibold text-rexcan-dark-blue-primary mb-3">
-                      Line Items
-                    </h4>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-rexcan-dark-blue-secondary/20">
-                            <th className="text-left py-2 px-3 text-rexcan-dark-blue-secondary font-semibold">
-                              Description
-                            </th>
-                            <th className="text-right py-2 px-3 text-rexcan-dark-blue-secondary font-semibold">
-                              Quantity
-                            </th>
-                            <th className="text-right py-2 px-3 text-rexcan-dark-blue-secondary font-semibold">
-                              Unit Price
-                            </th>
-                            <th className="text-right py-2 px-3 text-rexcan-dark-blue-secondary font-semibold">
-                              Amount
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {extractedData.lineItems.map((item, index) => (
-                            <tr
-                              key={index}
-                              className="border-b border-rexcan-dark-blue-secondary/10"
-                            >
-                              <td className="py-2 px-3 text-rexcan-dark-blue-primary">
-                                {item.description || 'N/A'}
-                              </td>
-                              <td className="py-2 px-3 text-right text-rexcan-dark-blue-primary">
-                                {item.quantity ?? 'N/A'}
-                              </td>
-                              <td className="py-2 px-3 text-right text-rexcan-dark-blue-primary">
-                                {item.unitPrice !== undefined
-                                  ? formatCurrency(item.unitPrice, extractedData.currency)
-                                  : 'N/A'}
-                              </td>
-                              <td className="py-2 px-3 text-right font-medium text-rexcan-dark-blue-primary">
-                                {item.amount !== undefined
-                                  ? formatCurrency(item.amount, extractedData.currency)
-                                  : 'N/A'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+          {/* Right Side: Extracted Data */}
+          <div className="w-1/2 overflow-y-auto bg-white">
+            <div className="p-6">
+          {/* Document Info */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide mb-4">
+              Document Information
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="pb-3 border-b border-gray-100">
+                <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Status</p>
+                <p className="text-sm font-medium text-gray-900 capitalize">{documentData.status}</p>
               </div>
-            </div>
-          ) : (
-            <div className="border-t border-rexcan-dark-blue-secondary/20 pt-6">
-              <div className="text-center py-8">
-                <p className="text-rexcan-dark-blue-secondary">
-                  {doc.status === 'processed'
-                    ? 'No extracted data available for this document.'
-                    : doc.status === 'processing'
-                      ? 'Document is being processed. Please check back later.'
-                      : 'Document has not been processed yet.'}
+              <div className="pb-3 border-b border-gray-100">
+                <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">File Type</p>
+                <p className="text-sm font-medium text-gray-900 uppercase">{documentData.fileType}</p>
+              </div>
+              {documentData.selectedModel && (
+                <div className="pb-3 border-b border-gray-100">
+                  <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">AI Model</p>
+                  <p className="text-sm font-medium text-gray-900 capitalize">
+                    {documentData.selectedModel === 'best' ? 'Best Model' : documentData.selectedModel}
+                  </p>
+                </div>
+              )}
+              <div className="pb-3 border-b border-gray-100">
+                <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">File Size</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {(documentData.fileSize / 1024).toFixed(2)} KB
+                </p>
+              </div>
+              <div className="col-span-2 pb-3 border-b border-gray-100">
+                <p className="text-xs text-gray-500 mb-1 uppercase tracking-wide">Uploaded</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {new Date(documentData.createdAt).toLocaleString()}
                 </p>
               </div>
             </div>
-          )}
+
+            {/* Processing Latency & Performance Metrics */}
+            {extractedData?.timings && (
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h4 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  Processing Performance
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {extractedData.timings.ocr_time && (
+                    <div className="bg-white rounded p-3 border border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">OCR Time</div>
+                      <div className="text-base font-medium text-gray-900">
+                        {extractedData.timings.ocr_time < 1 
+                          ? `${(extractedData.timings.ocr_time * 1000).toFixed(0)}ms`
+                          : `${extractedData.timings.ocr_time.toFixed(2)}s`}
+                      </div>
+                    </div>
+                  )}
+                  {extractedData.timings.heuristics_time && (
+                    <div className="bg-white rounded p-3 border border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">Heuristics Time</div>
+                      <div className="text-base font-medium text-gray-900">
+                        {extractedData.timings.heuristics_time < 1 
+                          ? `${(extractedData.timings.heuristics_time * 1000).toFixed(0)}ms`
+                          : `${extractedData.timings.heuristics_time.toFixed(2)}s`}
+                      </div>
+                    </div>
+                  )}
+                  {extractedData.timings.llm_time && (
+                    <div className="bg-white rounded p-3 border border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">LLM Time</div>
+                      <div className="text-base font-medium text-gray-900">
+                        {extractedData.timings.llm_time < 1 
+                          ? `${(extractedData.timings.llm_time * 1000).toFixed(0)}ms`
+                          : `${extractedData.timings.llm_time.toFixed(2)}s`}
+                      </div>
+                    </div>
+                  )}
+                  {extractedData.timings.total && (
+                    <div className="bg-white rounded p-3 border border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">Total Time</div>
+                      <div className="text-base font-medium text-gray-900">
+                        {extractedData.timings.total < 1 
+                          ? `${(extractedData.timings.total * 1000).toFixed(0)}ms`
+                          : `${extractedData.timings.total.toFixed(2)}s`}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {extractedData.llmUsed && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-600">
+                    AI Enhancement: Used for {extractedData.llmFields?.length || 0} field(s)
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Overall Confidence Summary */}
+            {extractedData?.fieldConfidences && (
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <h4 className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-3">
+                  Confidence Summary
+                </h4>
+                <div className="space-y-2">
+                  {Object.entries(extractedData.fieldConfidences).map(([field, confidence]) => {
+                    const conf = confidence as number;
+                    const source = extractedData.fieldSources?.[field];
+                    return (
+                      <div key={field} className="flex items-center justify-between bg-white rounded p-3 border border-gray-200">
+                        <div className="flex items-center space-x-2 flex-1 min-w-0">
+                          <span className="text-sm text-gray-700 capitalize truncate">
+                            {field.replace(/([A-Z])/g, ' $1').trim()}
+                          </span>
+                          {source && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium flex-shrink-0">
+                              {source}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center space-x-3 ml-4">
+                          <div className="w-20 bg-gray-200 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full transition-all ${
+                                conf >= 0.85 ? 'bg-green-500' :
+                                conf >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'
+                              }`}
+                              style={{ width: `${conf * 100}%` }}
+                            />
+                          </div>
+                          <span className={`text-sm font-medium w-10 text-right ${
+                            conf >= 0.85 ? 'text-green-600' :
+                            conf >= 0.5 ? 'text-yellow-600' : 'text-red-600'
+                          }`}>
+                            {(conf * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+              {/* Alerts */}
+              {extractedData && (
+                <>
+                  <DuplicateDetectionAlert
+                    isDuplicate={extractedData.isDuplicate || false}
+                    isNearDuplicate={extractedData.isNearDuplicate || false}
+                    nearDuplicates={extractedData.nearDuplicates}
+                    dedupeHash={extractedData.dedupeHash}
+                  />
+                  <ArithmeticMismatchWarning
+                    arithmeticMismatch={extractedData.arithmeticMismatch || false}
+                    subtotal={extractedData.amountSubtotal}
+                    tax={extractedData.amountTax}
+                    total={extractedData.totalAmount}
+                  />
+                </>
+              )}
+
+              {/* Extracted Data */}
+              {extractedData ? (
+                <div className="border-t border-gray-200 pt-6 mt-6">
+                  {/* Editable Fields Form */}
+                  <EditableFieldsForm
+                    extractedData={extractedData}
+                    onUpdate={handleFieldsUpdate}
+                  />
+
+                    {/* Line Items */}
+                    {extractedData.lineItems && extractedData.lineItems.length > 0 && (
+                      <div className="border-t border-gray-200 pt-4 mt-4">
+                        <EditableLineItemsTable
+                          lineItems={extractedData.lineItems.map((item) => ({
+                            description: item.description || '',
+                            quantity: item.quantity ?? null,
+                            unit_price: item.unitPrice ?? null,
+                            total: item.amount ?? null,
+                          }))}
+                          currency={extractedData.currency}
+                          onUpdate={handleLineItemsUpdate}
+                        />
+                      </div>
+                    )}
+            </div>
+              ) : (
+                <div className="border-t border-gray-200 pt-6">
+                  <div className="text-center py-12">
+                    <p className="text-sm text-gray-500">
+                      {documentData.status === 'processed'
+                        ? 'No extracted data available for this document.'
+                        : documentData.status === 'processing'
+                          ? 'Document is being processed. Please check back later.'
+                          : 'Document has not been processed yet.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Complete Processing Log - Show for all documents with pythonJobId */}
+              {documentData.pythonJobId && (
+                <div className="border-t border-gray-200 pt-6 mt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-medium text-gray-700 uppercase tracking-wide">
+                      Processing Log
+                    </h3>
+                    <span className="text-xs text-gray-500">
+                      Full processing history
+                    </span>
+                  </div>
+                  <ProcessingStatusLog
+                    pythonJobId={documentData.pythonJobId}
+                    onComplete={() => {
+                      // Optionally refresh document data when processing completes
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

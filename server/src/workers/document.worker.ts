@@ -8,7 +8,7 @@ import {
 import { DocumentStatus } from '../models/Document.model.js';
 import { logger } from '../utils/logger.js';
 import { env } from '../config/env.js';
-import { AIServiceRouter } from '../services/ai.service.router.js';
+import { pythonAPIService } from '../services/python-api.service.js';
 import path from 'path';
 
 // Worker configuration
@@ -45,21 +45,64 @@ export const documentWorker = new Worker<DocumentJobData>(
       // Get the full file path
       const fullFilePath = path.resolve(env.storage.basePath, filePath);
 
-      // Extract invoice data using the selected AI model
-      let extractedData;
-      if (fileType === 'pdf') {
-        logger.info(`Extracting data from PDF using ${selectedModel}: ${fullFilePath}`);
-        extractedData = await AIServiceRouter.extractInvoiceDataFromPDF(fullFilePath, selectedModel);
-      } else {
-        logger.info(`Extracting data from image using ${selectedModel}: ${fullFilePath}`);
-        extractedData = await AIServiceRouter.extractInvoiceDataFromImage(fullFilePath, selectedModel);
-      }
+      // Step 1: Upload file to Python service
+      logger.info(`Uploading file to Python service: ${fullFilePath}`);
+      const uploadResponse = await pythonAPIService.uploadFile(
+        fullFilePath,
+        fileName
+      );
+      logger.info(`File uploaded to Python service, job_id: ${uploadResponse.job_id}`);
 
-      // Update document with extracted data
-      if (extractedData) {
-        await updateDocumentExtractedData(documentId, extractedData);
-        logger.info(`Extracted data saved for document ${documentId}`);
-      }
+      // Step 2: Process invoice using Python service
+      logger.info(`Processing invoice with Python service, job_id: ${uploadResponse.job_id}`);
+      const invoiceExtract = await pythonAPIService.processInvoice(
+        uploadResponse.job_id
+      );
+      logger.info(`Invoice processed successfully, job_id: ${uploadResponse.job_id}`);
+
+      // Step 3: Transform Python service response to our document format
+      const extractedData = {
+        invoiceNumber: invoiceExtract.invoice_id || undefined,
+        vendorName: invoiceExtract.vendor_name || undefined,
+        vendorId: invoiceExtract.vendor_id || undefined,
+        invoiceDate: invoiceExtract.invoice_date || undefined,
+        dueDate: invoiceExtract.due_date || undefined,
+        totalAmount: invoiceExtract.total_amount || undefined,
+        amountSubtotal: invoiceExtract.amount_subtotal || undefined,
+        amountTax: invoiceExtract.amount_tax || undefined,
+        currency: invoiceExtract.currency || undefined,
+        lineItems: invoiceExtract.line_items?.map((item) => ({
+          description: item.description,
+          quantity: item.quantity || undefined,
+          unitPrice: item.unit_price || undefined,
+          total: item.total || undefined,
+        })),
+        // Python service specific fields
+        fieldConfidences: invoiceExtract.field_confidences,
+        fieldReasons: invoiceExtract.field_reasons,
+        fieldSources: invoiceExtract.field_sources,
+        timings: invoiceExtract.timings,
+        llmUsed: invoiceExtract.llm_used,
+        llmFields: invoiceExtract.llm_fields,
+        dedupeHash: invoiceExtract.dedupe_hash || undefined,
+        isDuplicate: invoiceExtract.is_duplicate,
+        isNearDuplicate: invoiceExtract.is_near_duplicate,
+        nearDuplicates: invoiceExtract.near_duplicates,
+        arithmeticMismatch: invoiceExtract.arithmetic_mismatch,
+        needsHumanReview: invoiceExtract.needs_human_review,
+        llmCallReason: invoiceExtract.llm_call_reason,
+        ocrBlocks: invoiceExtract.raw_ocr_blocks,
+        rawExtraction: invoiceExtract, // Store full response
+      };
+
+      // Update document with extracted data and Python job ID
+      await updateDocumentExtractedData(documentId, extractedData);
+      // Store Python job ID for future operations
+      const { Document } = await import('../models/Document.model.js');
+      await Document.findByIdAndUpdate(documentId, {
+        pythonJobId: uploadResponse.job_id,
+      });
+      logger.info(`Extracted data saved for document ${documentId}`);
 
       // Mark as processed
       await updateDocumentStatus(documentId, DocumentStatus.PROCESSED);

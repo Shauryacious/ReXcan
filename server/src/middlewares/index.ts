@@ -13,7 +13,23 @@ export const setupMiddlewares = (app: Express): void => {
   // CORS configuration
   app.use(
     cors({
-      origin: env.cors.origin,
+      origin: (origin, callback) => {
+        // In development, allow any localhost origin
+        if (env.nodeEnv === 'development') {
+          if (!origin || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+            callback(null, true);
+            return;
+          }
+        }
+        
+        // In production, use configured origin
+        const allowedOrigins = env.cors.origin.split(',').map(o => o.trim());
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       credentials: true,
     })
   );

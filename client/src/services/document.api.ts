@@ -69,6 +69,27 @@ class DocumentAPI {
     );
     return response.data;
   }
+
+  /**
+   * Update document extracted data
+   * @param documentId - Document ID
+   * @param extractedData - Partial extracted data to update
+   * @param lineItems - Optional line items to update
+   */
+  async updateDocument(
+    documentId: string,
+    extractedData?: Partial<import('../types/document.types').ExtractedData>,
+    lineItems?: import('../services/invoice.api').LineItem[]
+  ): Promise<DocumentResponse> {
+    const response = await apiClient.patch<DocumentResponse>(
+      `/documents/${documentId}`,
+      {
+        extractedData,
+        lineItems,
+      }
+    );
+    return response.data;
+  }
 }
 
 export const documentAPI = new DocumentAPI();

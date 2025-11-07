@@ -3,6 +3,7 @@ import { useState } from 'react';
 import DocumentDetailsModal from '@/components/DocumentDetailsModal';
 import DocumentsList from '@/components/DocumentsList';
 import FileUpload from '@/components/FileUpload';
+import ProcessingStatusLog from '@/components/ProcessingStatusLog';
 import { documentAPI } from '@/services/document.api';
 import type { Document } from '@/types/document.types';
 import { MODEL_OPTIONS, type AIModel } from '@/types/model.types';
@@ -45,6 +46,12 @@ const Dashboard = () => {
   };
 
   const handleDocumentSelect = async (document: Document) => {
+    // Ensure document has an ID
+    if (!document.id) {
+      console.error('Document ID is missing:', document);
+      return;
+    }
+
     // Fetch full document details including extracted data
     try {
       const response = await documentAPI.getDocument(document.id);
@@ -66,31 +73,31 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-rexcan-light-grey-secondary to-white">
-      <div className="container mx-auto px-6 py-12">
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto px-6 py-8">
         <div className="max-w-6xl mx-auto">
           {/* Header */}
           <div className="mb-8">
-            <h1 className="text-4xl md:text-5xl font-bold bg-text-gradient bg-clip-text text-transparent mb-2">
+            <h1 className="text-3xl font-normal text-gray-900 mb-2">
               Document Upload
             </h1>
-            <p className="text-rexcan-dark-blue-secondary text-lg">
+            <p className="text-gray-600 text-base">
               Upload invoices, receipts, and documents for processing
             </p>
           </div>
 
           {/* Upload Section */}
-          <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-            <h2 className="text-2xl font-semibold text-rexcan-dark-blue-primary mb-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <h2 className="text-lg font-medium text-gray-900 mb-6">
               Upload Document
             </h2>
 
             {/* Model Selection Card */}
-            <div className="mb-6 p-5 bg-gradient-to-br from-rexcan-light-grey-secondary/50 to-white rounded-xl border border-rexcan-dark-blue-secondary/10 shadow-sm">
+            <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
                   <svg
-                    className="w-5 h-5 text-[#00FFD8]"
+                    className="w-4 h-4 text-gray-600"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -104,16 +111,13 @@ const Dashboard = () => {
                   </svg>
                   <label
                     htmlFor="model-select"
-                    className="text-base font-semibold text-rexcan-dark-blue-primary"
+                    className="text-sm font-medium text-gray-700"
                   >
                     Select AI Model
                   </label>
                 </div>
                 {MODEL_OPTIONS.find((opt) => opt.value === selectedModel)?.recommended && (
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#00FFD8]/20 text-[#00FFD8] border border-[#00FFD8]/30">
-                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                    </svg>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
                     Recommended
                   </span>
                 )}
@@ -200,12 +204,30 @@ const Dashboard = () => {
           </div>
 
           {/* Documents List Section */}
-          <div className="bg-white rounded-lg shadow-lg p-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
             <DocumentsList
               refreshTrigger={refreshTrigger}
               onDocumentSelect={handleDocumentSelect}
             />
           </div>
+
+          {/* Processing Status Log - Show for documents being processed */}
+          {selectedDocument && 
+           selectedDocument.status === 'processing' && 
+           selectedDocument.pythonJobId && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h2 className="text-lg font-medium text-gray-900 mb-4">
+                Processing Status
+              </h2>
+              <ProcessingStatusLog
+                pythonJobId={selectedDocument.pythonJobId}
+                onComplete={() => {
+                  // Refresh documents list when processing completes
+                  setRefreshTrigger((prev) => prev + 1);
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
 

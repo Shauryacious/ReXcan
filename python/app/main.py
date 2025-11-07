@@ -124,7 +124,8 @@ async def upload_file(file: UploadFile = File(...)):
         "file_hash": file_hash,
         "file_size": file_size,
         "status": "uploaded",
-        "created_at": time.time()
+        "created_at": time.time(),
+        "logs": []  # Store processing logs
     }
     
     preview_url = f"/uploads/{file_path.name}"
@@ -198,7 +199,18 @@ async def process_invoice(job_id: str = Query(...)):
     start_total = time.time()
     timings = {}
     
+    # Helper function to add logs
+    def add_log(message: str, level: str = "info"):
+        if "logs" not in job:
+            job["logs"] = []
+        job["logs"].append({
+            "timestamp": time.time(),
+            "message": message,
+            "level": level
+        })
+    
     # Step 1: Extract text/OCR (with retry logic and backpressure)
+    add_log("Starting invoice processing...", "info")
     ocr_start = time.time()
     if "ocr_blocks" not in job:
         # Check backpressure
@@ -207,11 +219,14 @@ async def process_invoice(job_id: str = Query(...)):
         can_process, wait_time = bp_manager.can_process_ocr()
         if not can_process:
             if wait_time:
+                add_log(f"OCR rate limited. Wait {wait_time:.1f}s", "warning")
                 raise HTTPException(status_code=429, detail=f"OCR rate limited. Wait {wait_time:.1f}s")
             else:
+                add_log("OCR queue full. Please try again later.", "error")
                 raise HTTPException(status_code=429, detail="OCR queue full. Please try again later.")
         
-        blocks, extraction_time = extract_text(file_path, ocr_engine)
+        add_log("Extracting text from document...", "info")
+        blocks, extraction_time = extract_text(file_path, ocr_engine, log_callback=add_log)
         blocks_dict = [b.dict() for b in blocks]
         job["ocr_blocks"] = blocks_dict
         job["docai_used"] = blocks_dict[0].get("engine") == "docai" if blocks_dict else False
@@ -223,8 +238,10 @@ async def process_invoice(job_id: str = Query(...)):
     blocks = [OCRBlock(**b) for b in blocks_dict]
     
     timings["ocr"] = time.time() - ocr_start
+    add_log(f"OCR completed: {len(blocks)} blocks extracted in {timings['ocr']:.2f}s", "success")
     
     # Step 2: Heuristic extraction
+    add_log("Running heuristic extraction...", "info")
     heuristics_start = time.time()
     
     invoice_id_result = extract_invoice_id(blocks)
@@ -240,6 +257,7 @@ async def process_invoice(job_id: str = Query(...)):
     subtotal_result = extract_subtotal(blocks, total_amount_result[0])
     
     timings["heuristics"] = time.time() - heuristics_start
+    add_log(f"Heuristic extraction completed in {timings['heuristics']:.2f}s", "success")
     
     # Early LLM fallback if heuristics found nothing (fast path)
     heuristic_success = sum(1 for r in [invoice_id_result, invoice_date_result, 
@@ -276,23 +294,25 @@ async def process_invoice(job_id: str = Query(...)):
     
     # Early-exit: If all required fields have high confidence, skip LLM
     early_exit_threshold = 0.85
+    # Result tuples are: (value, confidence, reason)
+    # Use index [1] for confidence (float), not [2] which is reason (string)
     invoice_id_conf_quick = 0.2 + 0.7 * min(
-        invoice_id_result[2] if len(invoice_id_result) > 2 else 0.5,
+        invoice_id_result[1] if len(invoice_id_result) > 1 else 0.5,
         1.0 if invoice_id_result[0] else 0.0,
         1.0 if invoice_id_result[0] else 0.0
     )
     total_amount_conf_quick = 0.2 + 0.7 * min(
-        total_amount_result[2] if len(total_amount_result) > 2 else 0.5,
+        total_amount_result[1] if len(total_amount_result) > 1 else 0.5,
         1.0 if total_amount_result[0] else 0.0,
         1.0 if total_amount_result[0] else 0.0
     )
     invoice_date_conf_quick = 0.2 + 0.7 * min(
-        invoice_date_result[2] if len(invoice_date_result) > 2 else 0.5,
+        invoice_date_result[1] if len(invoice_date_result) > 1 else 0.5,
         1.0 if invoice_date_result[0] else 0.0,
         1.0 if invoice_date_result[0] else 0.0
     )
     vendor_name_conf_quick = 0.2 + 0.7 * min(
-        vendor_name_result[2] if len(vendor_name_result) > 2 else 0.5,
+        vendor_name_result[1] if len(vendor_name_result) > 1 else 0.5,
         1.0 if vendor_name_result[0] else 0.0,
         1.0 if vendor_name_result[0] else 0.0
     )
@@ -458,10 +478,13 @@ async def process_invoice(job_id: str = Query(...)):
                 llm_result = None
         else:
             llm_call_reason = llm_reasons.get(fields_to_extract[0], "low_conf")
-            print(f"  → Calling LLM for {len(fields_to_extract)} fields: {', '.join(fields_to_extract)} (reason: {llm_call_reason})")
+            llm_msg = f"Calling LLM for {len(fields_to_extract)} fields: {', '.join(fields_to_extract)} (reason: {llm_call_reason})"
+            print(f"  → {llm_msg}")
+            add_log(llm_msg, "info")
             
             try:
                 llm_result, llm_time = timeit("llm_batch", llm_router.extract_fields, fields_to_extract, blocks, file_path, 8.0)
+                add_log(f"LLM extraction completed in {llm_time:.2f}s", "success")
                 
                 if llm_result:
                     llm_used = True
@@ -690,6 +713,7 @@ async def process_invoice(job_id: str = Query(...)):
     job["status"] = "processed"
     job["result"] = result_dict
     job["needs_human_review"] = needs_human_review
+    add_log("Processing completed successfully!", "success")
     job["llm_call_reason"] = llm_call_reason
     
     # Update metrics with detailed timings
@@ -736,6 +760,30 @@ async def process_invoice(job_id: str = Query(...)):
     audit_logger.log_processing(job_id, result.dict(), timings)
     
     return result
+
+
+@app.get("/status")
+async def get_job_status(job_id: str = Query(...)):
+    """Get processing status and logs for a job.
+    
+    Args:
+        job_id: Job ID from upload
+    
+    Returns:
+        Job status, current stage, and logs
+    """
+    if job_id not in job_storage:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = job_storage[job_id]
+    
+    return {
+        "job_id": job_id,
+        "status": job.get("status", "unknown"),
+        "logs": job.get("logs", []),
+        "has_result": "result" in job,
+        "needs_human_review": job.get("needs_human_review", False)
+    }
 
 
 @app.post("/verify")
@@ -920,6 +968,40 @@ async def export_csv(job_id: str = Query(...), erp_type: str = Query("quickbooks
     return StreamingResponse(
         iter([csv_content]),
         media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.get("/export/json")
+async def export_json(job_id: str = Query(...)):
+    """Export invoice as JSON.
+    
+    Args:
+        job_id: Job ID from upload
+    
+    Returns:
+        JSON file with invoice data
+    """
+    if job_id not in job_storage:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = job_storage[job_id]
+    result = job.get("result")
+    
+    if not result:
+        raise HTTPException(
+            status_code=400,
+            detail="Invoice has not been processed yet. Please process the invoice first."
+        )
+    
+    # Return JSON response with proper headers
+    import json
+    json_content = json.dumps(result, indent=2, ensure_ascii=False)
+    filename = f"invoice_{job_id}.json"
+    
+    return Response(
+        content=json_content,
+        media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
