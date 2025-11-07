@@ -7,7 +7,6 @@ export interface InvoiceExtractionResult {
   invoiceNumber?: string;
   vendorName?: string;
   invoiceDate?: string;
-  dueDate?: string;
   totalAmount?: number;
   currency?: string;
   lineItems?: Array<{
@@ -20,7 +19,6 @@ export interface InvoiceExtractionResult {
     taxRate?: number;
     taxAmount?: number;
   };
-  paymentTerms?: string;
   rawExtraction?: Record<string, unknown>;
 }
 
@@ -79,12 +77,10 @@ export async function extractInvoiceDataFromImage(
   "invoiceNumber": "string or null",
   "vendorName": "string or null",
   "invoiceDate": "YYYY-MM-DD format or null",
-  "dueDate": "YYYY-MM-DD format or null",
   "totalAmount": number or null,
   "currency": "string (e.g., USD, EUR) or null",
   "lineItems": [{"description": "string", "quantity": number, "unitPrice": number, "amount": number}] or null,
   "taxInformation": {"taxRate": number, "taxAmount": number} or null,
-  "paymentTerms": "string or null"
 }
 
 Extract all available information from the invoice. Convert dates to YYYY-MM-DD format. Return only valid JSON, no additional text.`;
@@ -207,12 +203,10 @@ export async function extractInvoiceDataFromPDF(
   "invoiceNumber": "string or null",
   "vendorName": "string or null",
   "invoiceDate": "YYYY-MM-DD format or null",
-  "dueDate": "YYYY-MM-DD format or null",
   "totalAmount": number or null,
   "currency": "string (e.g., USD, EUR) or null",
   "lineItems": [{"description": "string", "quantity": number, "unitPrice": number, "amount": number}] or null,
   "taxInformation": {"taxRate": number, "taxAmount": number} or null,
-  "paymentTerms": "string or null"
 }
 
 Extract all available information from the invoice. Convert dates to YYYY-MM-DD format. Return only valid JSON, no additional text.`;

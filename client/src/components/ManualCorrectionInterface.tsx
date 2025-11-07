@@ -59,7 +59,6 @@ const ManualCorrectionInterface = ({
     { key: 'invoice_id', label: 'Invoice ID', type: 'text' },
     { key: 'vendor_name', label: 'Vendor Name', type: 'text' },
     { key: 'invoice_date', label: 'Invoice Date', type: 'date' },
-    { key: 'due_date', label: 'Due Date', type: 'date' },
     { key: 'total_amount', label: 'Total Amount', type: 'number', step: '0.01' },
     { key: 'amount_subtotal', label: 'Subtotal', type: 'number', step: '0.01' },
     { key: 'amount_tax', label: 'Tax Amount', type: 'number', step: '0.01' },

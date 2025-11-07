@@ -190,28 +190,6 @@ const EditableFieldsForm = ({ extractedData, onUpdate }: EditableFieldsFormProps
           )}
         </div>
 
-        {/* Due Date */}
-        <div className="pb-4 border-b border-gray-100">
-          <label className="block text-xs text-gray-500 uppercase tracking-wide mb-2">
-            Due Date
-          </label>
-          {isEditing ? (
-            <input
-              type="date"
-              value={formatDate(formData.dueDate)}
-              onChange={(e) => handleFieldChange('dueDate', e.target.value || undefined)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          ) : (
-            <p className="text-base font-medium text-gray-900">
-              {formData.dueDate ? new Date(formData.dueDate).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              }) : 'N/A'}
-            </p>
-          )}
-        </div>
 
         {/* Currency */}
         <div className="pb-4 border-b border-gray-100">
@@ -303,25 +281,6 @@ const EditableFieldsForm = ({ extractedData, onUpdate }: EditableFieldsFormProps
           )}
         </div>
 
-        {/* Payment Terms */}
-        <div className="col-span-2 pb-4 border-b border-gray-100">
-          <label className="block text-xs text-gray-500 uppercase tracking-wide mb-2">
-            Payment Terms
-          </label>
-          {isEditing ? (
-            <input
-              type="text"
-              value={formData.paymentTerms || ''}
-              onChange={(e) => handleFieldChange('paymentTerms', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Enter payment terms"
-            />
-          ) : (
-            <p className="text-base font-medium text-gray-900">
-              {formData.paymentTerms || 'N/A'}
-            </p>
-          )}
-        </div>
       </div>
 
       {/* Tax Information */}

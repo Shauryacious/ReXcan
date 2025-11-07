@@ -133,20 +133,46 @@ class VendorCanonicalizer:
 def canonicalize_date(date_str: Optional[str]) -> Optional[str]:
     """Canonicalize date to YYYY-MM-DD format.
     
+    Handles various date formats including:
+    - ISO format (YYYY-MM-DD)
+    - Numeric formats (MM/DD/YYYY, DD/MM/YYYY, etc.)
+    - Written dates (March 15, 2050, Nov 1, 2024, etc.)
+    
     Args:
         date_str: Date string in any format
     
     Returns:
-        ISO date string (YYYY-MM-DD) or None
+        ISO date string (YYYY-MM-DD) or None if invalid
     """
     if not date_str:
         return None
     
+    # If already in ISO format, validate and return
+    if isinstance(date_str, str) and re.match(r'^\d{4}-\d{2}-\d{2}$', date_str.strip()):
+        try:
+            # Validate the date
+            parsed_date = datetime.strptime(date_str.strip(), '%Y-%m-%d').date()
+            today = datetime.now().date()
+            min_date = datetime(2000, 1, 1).date()
+            max_date = datetime(today.year + 5, 12, 31).date()
+            if min_date <= parsed_date <= max_date:
+                return date_str.strip()
+        except (ValueError, TypeError):
+            pass
+    
     try:
         parsed = date_parser.parse(str(date_str), fuzzy=True)
-        return parsed.date().isoformat()
-    except:
-        return None
+        if isinstance(parsed, datetime):
+            # Validate date range (2000 to 5 years in future)
+            today = datetime.now()
+            min_date = datetime(2000, 1, 1)
+            max_date = datetime(today.year + 5, 12, 31)
+            if min_date <= parsed <= max_date:
+                return parsed.date().isoformat()
+    except (ValueError, TypeError, AttributeError):
+        pass
+    
+    return None
 
 
 def canonicalize_currency(currency_str: Optional[str]) -> Optional[str]:

@@ -66,7 +66,6 @@ export const documentWorker = new Worker<DocumentJobData>(
         vendorName: invoiceExtract.vendor_name || undefined,
         vendorId: invoiceExtract.vendor_id || undefined,
         invoiceDate: invoiceExtract.invoice_date || undefined,
-        dueDate: invoiceExtract.due_date || undefined,
         totalAmount: invoiceExtract.total_amount || undefined,
         amountSubtotal: invoiceExtract.amount_subtotal || undefined,
         amountTax: invoiceExtract.amount_tax || undefined,
@@ -87,7 +86,7 @@ export const documentWorker = new Worker<DocumentJobData>(
               'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
               'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
               'thanks for your business', 'thank you for your business', 'thanks foryour business',
-              'payment terms', 'to be received', 'within', 'days',
+              'to be received', 'within', 'days',
               'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
               'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
               'your name', 'sincerely', 'regards', 'best regards',
@@ -135,14 +134,39 @@ export const documentWorker = new Worker<DocumentJobData>(
         arithmeticMismatch: invoiceExtract.arithmetic_mismatch,
         needsHumanReview: invoiceExtract.needs_human_review,
         llmCallReason: invoiceExtract.llm_call_reason,
+        // Validation flags for invalid invoices
+        missingInvoiceId: invoiceExtract.missing_invoice_id,
+        missingTotal: invoiceExtract.missing_total,
+        missingVendorName: invoiceExtract.missing_vendor_name,
+        missingDate: invoiceExtract.missing_date,
+        isInvalid: invoiceExtract.is_invalid,
         ocrBlocks: invoiceExtract.raw_ocr_blocks,
         rawExtraction: invoiceExtract as Record<string, unknown>, // Store full response
       };
 
+      // Check for duplicates in the database before saving
+      const { Document } = await import('../models/Document.model.js');
+      if (extractedData.dedupeHash) {
+        // Query database for existing documents with the same hash (excluding current document)
+        const existingDuplicate = await Document.findOne({
+          'extractedData.dedupeHash': extractedData.dedupeHash,
+          _id: { $ne: documentId },
+          status: DocumentStatus.PROCESSED,
+        });
+
+        if (existingDuplicate) {
+          // Mark as duplicate
+          extractedData.isDuplicate = true;
+          logger.info(
+            `Duplicate invoice detected for document ${documentId} (hash: ${extractedData.dedupeHash.substring(0, 16)}...). ` +
+            `Duplicate of document: ${existingDuplicate._id}`
+          );
+        }
+      }
+
       // Update document with extracted data and Python job ID
       await updateDocumentExtractedData(documentId, extractedData);
       // Store Python job ID for future operations
-      const { Document } = await import('../models/Document.model.js');
       await Document.findByIdAndUpdate(documentId, {
         pythonJobId: uploadResponse.job_id,
       });

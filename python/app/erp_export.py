@@ -11,7 +11,6 @@ ERP_SCHEMAS = {
         "invoice_id": "Invoice Number",
         "vendor_name": "Vendor",
         "invoice_date": "Date",
-        "due_date": "Due Date",
         "total_amount": "Amount",
         "amount_subtotal": "Subtotal",
         "amount_tax": "Tax",
@@ -21,7 +20,6 @@ ERP_SCHEMAS = {
         "invoice_id": "Invoice Number",
         "vendor_name": "Vendor Name",
         "invoice_date": "Document Date",
-        "due_date": "Due Date",
         "total_amount": "Net Amount",
         "amount_subtotal": "Subtotal",
         "amount_tax": "Tax Amount",
@@ -31,7 +29,6 @@ ERP_SCHEMAS = {
         "invoice_id": "Invoice Number",
         "vendor_name": "Supplier Name",
         "invoice_date": "Invoice Date",
-        "due_date": "Due Date",
         "total_amount": "Invoice Amount",
         "amount_subtotal": "Subtotal",
         "amount_tax": "Tax",
@@ -41,7 +38,6 @@ ERP_SCHEMAS = {
         "invoice_id": "Invoice Number",
         "vendor_name": "Contact Name",
         "invoice_date": "Date",
-        "due_date": "Due Date",
         "total_amount": "Total",
         "amount_subtotal": "Subtotal",
         "amount_tax": "Tax",
@@ -76,7 +72,7 @@ def export_to_erp_format(invoice_data: Dict[str, Any], erp_type: str = "quickboo
     for field_key in schema.keys():
         value = invoice_data.get(field_key, "")
         # Format dates for ERP
-        if field_key in ["invoice_date", "due_date"] and value:
+        if field_key == "invoice_date" and value:
             # Keep ISO format (YYYY-MM-DD) - most ERPs accept this
             row.append(value)
         # Format amounts

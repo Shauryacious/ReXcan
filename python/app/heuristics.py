@@ -246,10 +246,15 @@ def extract_invoice_id(blocks: List[OCRBlock]) -> Tuple[Optional[str], float, st
 
 
 def extract_date(blocks: List[OCRBlock], field_type: str = "invoice") -> Tuple[Optional[str], float, str]:
-    """Extract date (invoice_date or due_date) with two-tier regex.
+    """Extract date (invoice_date or due_date) with comprehensive date detection.
+    
+    Handles multiple date formats including:
+    - ISO format (YYYY-MM-DD)
+    - Numeric formats (MM/DD/YYYY, DD/MM/YYYY, etc.)
+    - Written dates (March 15, 2050, Nov 1, 2024, etc.)
     
     Returns:
-        (date string, confidence, reason)
+        (date string in YYYY-MM-DD format, confidence, reason)
     """
     if not blocks:
         return None, 0.0, "No blocks available"
@@ -264,19 +269,25 @@ def extract_date(blocks: List[OCRBlock], field_type: str = "invoice") -> Tuple[O
             'text_orig': b.text
         })
     
-    # Strict regex patterns
-    STRICT_DATE_RE = re.compile(
-        r'\b\d{4}-\d{2}-\d{2}\b'  # ISO format
-    )
-    STRICT_DATE_RE_ALT = re.compile(
-        r'\b\d{1,2}[\/\-\.\s]\d{1,2}[\/\-\.\s]\d{2,4}\b'  # Common formats
-    )
+    # Comprehensive date regex patterns (including written dates)
+    DATE_PATTERNS = [
+        (re.compile(r'\b\d{4}-\d{2}-\d{2}\b'), 'iso'),  # YYYY-MM-DD
+        (re.compile(r'\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b'), 'numeric'),  # MM/DD/YYYY or DD/MM/YYYY
+        (re.compile(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b', re.IGNORECASE), 'written_short'),  # Mar 15, 2050
+        (re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b', re.IGNORECASE), 'written_full'),  # March 15, 2050
+        (re.compile(r'\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b', re.IGNORECASE), 'written_dmy'),  # 15 Mar 2050
+        (re.compile(r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', re.IGNORECASE), 'written_dmy_full'),  # 15 March 2050
+    ]
     
-    # Label patterns
+    # Label patterns (expanded)
     if field_type == "invoice":
-        date_labels = ["invoice date", "date of invoice", "bill date", "issue date"]
+        date_labels = [
+            "invoice date", "date of invoice", "bill date", "issue date",
+            "invoice dated", "date issued", "invoice issued", "date",
+            "receipt date", "transaction date", "document date"
+        ]
     else:
-        date_labels = ["due date", "payment due", "pay by"]
+        date_labels = ["due date", "payment due", "pay by", "due on", "payment date"]
     
     label_blocks = []
     for nb in normalized_blocks:
@@ -286,71 +297,120 @@ def extract_date(blocks: List[OCRBlock], field_type: str = "invoice") -> Tuple[O
                 break
     
     candidates = []
+    today = datetime.now()
+    min_date = datetime(2000, 1, 1)
+    max_date = datetime(today.year + 5, 12, 31)
     
-    # Strategy 1: Find label + nearby date (strict regex)
+    # Strategy 1: Find label + nearby date (highest priority)
     for label_block in label_blocks:
-        candidate = find_candidate_near(label_block, blocks, prefer_right=True, max_px=150)
+        candidate = find_candidate_near(label_block, blocks, prefer_right=True, max_px=200)
         if candidate:
             text_norm = normalize_text(candidate.text)
-            # Try ISO format first
-            match = STRICT_DATE_RE.search(text_norm)
-            if not match:
-                match = STRICT_DATE_RE_ALT.search(text_norm)
-            if match:
-                date_str = match.group(0)
+            text_orig = candidate.text
+            
+            # Try all date patterns
+            for pattern, pattern_type in DATE_PATTERNS:
+                match = pattern.search(text_orig if 'written' in pattern_type else text_norm)
+                if match:
+                    date_str = match.group(0)
+                    try:
+                        parsed = date_parser.parse(date_str, fuzzy=True)
+                        if isinstance(parsed, datetime):
+                            if min_date <= parsed <= max_date:
+                                iso_date = parsed.date().isoformat()
+                                confidence = 0.90 if pattern_type == 'iso' else 0.85
+                                candidates.append(('label_nearby', iso_date, candidate, confidence, 
+                                                 f"Found {pattern_type} date near {field_type} date label"))
+                                break  # Found a date, move to next label block
+                    except (ValueError, TypeError):
+                        continue
+            
+            # If regex didn't match, try fuzzy parsing on the entire candidate text
+            candidate_found = any(c[2] == candidate for c in candidates)
+            if not candidate_found:
                 try:
-                    parsed = date_parser.parse(date_str, fuzzy=True)
-                    iso_date = parsed.date().isoformat()
-                    candidates.append(('strict', iso_date, candidate, 0.85, f"Found near {field_type} date label"))
-                except:
+                    # Try parsing the entire block text as a date
+                    parsed = date_parser.parse(text_orig, fuzzy=True, default=datetime.now())
+                    if isinstance(parsed, datetime):
+                        # Check if it looks like a date (has year, month, day components)
+                        if parsed.year >= 2000 and parsed.year <= today.year + 5:
+                            iso_date = parsed.date().isoformat()
+                            candidates.append(('label_nearby_fuzzy', iso_date, candidate, 0.80, 
+                                             f"Fuzzy parsed date near {field_type} date label"))
+                except (ValueError, TypeError):
                     pass
     
-    # Strategy 2: Global strict scan
+    # Strategy 2: Global scan with regex patterns (high confidence)
     if not candidates:
         for nb in normalized_blocks:
-            match = STRICT_DATE_RE.search(nb['text_norm'])
-            if not match:
-                match = STRICT_DATE_RE_ALT.search(nb['text_norm'])
-            if match:
-                date_str = match.group(0)
-                try:
-                    parsed = date_parser.parse(date_str, fuzzy=True)
-                    iso_date = parsed.date().isoformat()
-                    # Validate date range
-                    from datetime import datetime
-                    today = datetime.now()
-                    min_date = datetime(2000, 1, 1)
-                    max_date = datetime(today.year + 5, 12, 31)
-                    if min_date <= parsed <= max_date:
-                        candidates.append(('strict', iso_date, nb['block'], 0.75, f"Found date in document"))
-                except:
-                    pass
+            for pattern, pattern_type in DATE_PATTERNS:
+                match = pattern.search(nb['text_orig'] if 'written' in pattern_type else nb['text_norm'])
+                if match:
+                    date_str = match.group(0)
+                    try:
+                        parsed = date_parser.parse(date_str, fuzzy=True)
+                        if isinstance(parsed, datetime):
+                            if min_date <= parsed <= max_date:
+                                iso_date = parsed.date().isoformat()
+                                confidence = 0.80 if pattern_type == 'iso' else 0.75
+                                candidates.append(('global_regex', iso_date, nb['block'], confidence, 
+                                                 f"Found {pattern_type} date in document"))
+                                break  # Found a date in this block, move to next
+                    except (ValueError, TypeError):
+                        continue
     
-    # Strategy 3: Relaxed date patterns
+    # Strategy 3: Fuzzy parsing on blocks that might contain dates
     if not candidates:
-        RELAXED_DATE_RE = re.compile(r'\b\d{1,2}[\/\-\.\s]\d{1,2}[\/\-\.\s]\d{2,4}\b')
+        # Look for blocks that contain month names or date-like patterns
+        month_names = ['january', 'february', 'march', 'april', 'may', 'june',
+                       'july', 'august', 'september', 'october', 'november', 'december',
+                       'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                       'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+        
         for nb in normalized_blocks:
-            match = RELAXED_DATE_RE.search(nb['text_orig'])
-            if match:
-                date_str = match.group(0)
+            text_lower = nb['text_orig'].lower()
+            # Check if block contains a month name and numbers
+            has_month = any(month in text_lower for month in month_names)
+            has_numbers = bool(re.search(r'\d', nb['text_orig']))
+            
+            if has_month and has_numbers:
                 try:
-                    parsed = date_parser.parse(date_str, fuzzy=True)
-                    iso_date = parsed.date().isoformat()
-                    from datetime import datetime
-                    today = datetime.now()
-                    min_date = datetime(2000, 1, 1)
-                    max_date = datetime(today.year + 5, 12, 31)
+                    parsed = date_parser.parse(nb['text_orig'], fuzzy=True, default=datetime.now())
+                    if isinstance(parsed, datetime):
+                        if min_date <= parsed <= max_date:
+                            iso_date = parsed.date().isoformat()
+                            candidates.append(('fuzzy_month', iso_date, nb['block'], 0.70, 
+                                             "Fuzzy parsed date with month name"))
+                except (ValueError, TypeError):
+                    continue
+    
+    # Strategy 4: Last resort - fuzzy parse all blocks
+    if not candidates:
+        for nb in normalized_blocks:
+            # Skip blocks that are too short or don't look date-like
+            if len(nb['text_orig'].strip()) < 5 or len(nb['text_orig'].strip()) > 50:
+                continue
+            if not re.search(r'\d', nb['text_orig']):  # Must have at least one digit
+                continue
+            
+            try:
+                parsed = date_parser.parse(nb['text_orig'], fuzzy=True, default=datetime.now())
+                if isinstance(parsed, datetime):
                     if min_date <= parsed <= max_date:
-                        candidates.append(('relaxed', iso_date, nb['block'], 0.65, f"Found date with relaxed regex"))
-                except:
-                    pass
+                        iso_date = parsed.date().isoformat()
+                        candidates.append(('fuzzy_all', iso_date, nb['block'], 0.60, 
+                                         "Fuzzy parsed date from block text"))
+            except (ValueError, TypeError):
+                continue
     
     if candidates:
-        # Sort by position (first for invoice, last for due)
-        candidates.sort(key=lambda x: x[2].bbox[1])
+        # Sort by confidence (highest first), then by position
+        candidates.sort(key=lambda x: (-x[3], x[2].bbox[1]))
         if field_type == "invoice":
+            # For invoice dates, prefer earlier dates (top of page)
             return candidates[0][1], candidates[0][3], candidates[0][4]
         else:
+            # For due dates, prefer later dates (bottom of page)
             return candidates[-1][1], candidates[-1][3], candidates[-1][4]
     
     return None, 0.0, f"No {field_type} date found"

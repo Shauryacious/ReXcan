@@ -178,7 +178,6 @@ def validate_field(field_name: str, value: any) -> Tuple[bool, str]:
     validators = {
         'invoice_id': validate_invoice_id,
         'invoice_date': validate_date,
-        'due_date': validate_date,
         'total_amount': validate_amount,
         'currency': validate_currency,
         'vendor_name': validate_vendor_name,

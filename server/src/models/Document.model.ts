@@ -38,7 +38,6 @@ export interface IDocument extends MongooseDocument {
     vendorName?: string;
     vendorId?: string;
     invoiceDate?: string;
-    dueDate?: string;
     totalAmount?: number;
     amountSubtotal?: number;
     amountTax?: number;
@@ -53,7 +52,6 @@ export interface IDocument extends MongooseDocument {
       taxRate?: number;
       taxAmount?: number;
     };
-    paymentTerms?: string;
     rawExtraction?: Record<string, unknown>;
     // Python service fields
     fieldConfidences?: Record<string, number>;
@@ -69,6 +67,12 @@ export interface IDocument extends MongooseDocument {
     arithmeticMismatch?: boolean;
     needsHumanReview?: boolean;
     llmCallReason?: string;
+    // Validation flags for invalid invoices
+    missingInvoiceId?: boolean;
+    missingTotal?: boolean;
+    missingVendorName?: boolean;
+    missingDate?: boolean;
+    isInvalid?: boolean;
     ocrBlocks?: Array<{
       text: string;
       bbox: number[];
@@ -141,7 +145,6 @@ const documentSchema = new Schema<IDocument>(
       vendorName: String,
       vendorId: String,
       invoiceDate: String,
-      dueDate: String,
       totalAmount: Number,
       amountSubtotal: Number,
       amountTax: Number,
@@ -156,7 +159,6 @@ const documentSchema = new Schema<IDocument>(
         taxRate: Number,
         taxAmount: Number,
       },
-      paymentTerms: String,
       rawExtraction: Schema.Types.Mixed,
       // Python service fields
       fieldConfidences: Schema.Types.Mixed,
@@ -172,6 +174,12 @@ const documentSchema = new Schema<IDocument>(
       arithmeticMismatch: Boolean,
       needsHumanReview: Boolean,
       llmCallReason: String,
+      // Validation flags for invalid invoices
+      missingInvoiceId: Boolean,
+      missingTotal: Boolean,
+      missingVendorName: Boolean,
+      missingDate: Boolean,
+      isInvalid: Boolean,
       ocrBlocks: Schema.Types.Mixed,
     },
     pythonJobId: String,
@@ -199,6 +207,7 @@ const documentSchema = new Schema<IDocument>(
 documentSchema.index({ userId: 1, createdAt: -1 });
 documentSchema.index({ status: 1, createdAt: -1 });
 documentSchema.index({ queueJobId: 1 });
+documentSchema.index({ 'extractedData.dedupeHash': 1 }); // Index for duplicate detection
 
 export const Document = mongoose.model<IDocument>('Document', documentSchema);
 

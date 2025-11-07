@@ -198,7 +198,7 @@ class EditLearner:
                 rule["condition"] = f"If text starts with '{pattern}' in top-left region"
         
         # For invoice_date: extract date pattern
-        elif field_name in ["invoice_date", "due_date"] and isinstance(new_value, str):
+        elif field_name == "invoice_date" and isinstance(new_value, str):
             # Extract date format pattern
             rule["pattern"] = new_value  # ISO format YYYY-MM-DD
             rule["condition"] = f"If date field found, prefer ISO format: {new_value}"

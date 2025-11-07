@@ -26,7 +26,6 @@ class InvoiceExtract(BaseModel):
     vendor_name: Optional[str] = None
     vendor_id: Optional[str] = None
     invoice_date: Optional[str] = None  # YYYY-MM-DD
-    due_date: Optional[str] = None  # YYYY-MM-DD
     total_amount: Optional[float] = None
     amount_subtotal: Optional[float] = None
     amount_tax: Optional[float] = None
@@ -44,6 +43,12 @@ class InvoiceExtract(BaseModel):
     is_near_duplicate: bool = False  # Flag if near-duplicate invoice detected
     near_duplicates: List[Dict[str, Any]] = Field(default_factory=list, description="List of near-duplicate invoices with similarity scores")
     arithmetic_mismatch: bool = False  # Flag if subtotal + tax ≠ total
+    # Validation flags for invalid invoices
+    missing_invoice_id: bool = False  # Flag if invoice_id is not present
+    missing_total: bool = False  # Flag if total_amount is not present
+    missing_vendor_name: bool = False  # Flag if vendor_name is not present
+    missing_date: bool = False  # Flag if invoice_date is not present
+    is_invalid: bool = False  # Flag if invoice is invalid (any of the above missing fields)
 
 
 class ProcessRequest(BaseModel):

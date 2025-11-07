@@ -106,7 +106,6 @@ GROQ_API_KEY=your_groq_api_key_here
    - Total amount and currency
    - Line items
    - Tax information
-   - Payment terms
 4. **Document Worker**: Updated to automatically extract invoice data using Groq API when documents are processed
 
 ## How It Works

@@ -53,7 +53,6 @@ An intelligent automation pipeline is needed that can:
   - Total Amount
   - Line Items
   - Tax Information
-  - Payment Terms
 - **Standardize** extracted data into consistent formats (canonicalization)
 - **Flag** low-confidence extractions for human verification
 - **Output** structured data (JSON/CSV) compatible with accounting systems

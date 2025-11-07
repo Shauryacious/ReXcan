@@ -338,9 +338,6 @@ export const exportJSON = asyncHandler(
         if (document.extractedData.invoiceDate) {
           exportData.invoice_date = document.extractedData.invoiceDate;
         }
-        if (document.extractedData.dueDate) {
-          exportData.due_date = document.extractedData.dueDate;
-        }
         if (document.extractedData.totalAmount !== undefined) {
           exportData.total_amount = document.extractedData.totalAmount;
         }
@@ -372,7 +369,7 @@ export const exportJSON = asyncHandler(
                 'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
                 'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
                 'thanks for your business', 'thank you for your business', 'thanks foryour business',
-                'payment terms', 'to be received', 'within', 'days',
+                'to be received', 'within', 'days',
                 'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
                 'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
                 'your name', 'sincerely', 'regards', 'best regards',

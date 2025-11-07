@@ -288,9 +288,6 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
     if (extractedData.invoiceDate !== undefined) {
       corrections.invoice_date = extractedData.invoiceDate;
     }
-    if (extractedData.dueDate !== undefined) {
-      corrections.due_date = extractedData.dueDate;
-    }
     if (extractedData.totalAmount !== undefined) {
       corrections.total_amount = extractedData.totalAmount;
     }
@@ -931,41 +928,43 @@ const DocumentDetailsModal = ({ document: doc, isOpen, onClose, onDocumentDelete
                   Confidence Summary
                 </h4>
                 <div className="space-y-2">
-                  {Object.entries(extractedData.fieldConfidences).map(([field, confidence]) => {
-                    const conf = confidence as number;
-                    const source = extractedData.fieldSources?.[field];
-                    return (
-                      <div key={field} className="flex items-center justify-between bg-white rounded p-3 border border-gray-200">
-                        <div className="flex items-center space-x-2 flex-1 min-w-0">
-                          <span className="text-sm text-gray-700 capitalize truncate">
-                            {field.replace(/([A-Z])/g, ' $1').trim()}
-                          </span>
-                          {source && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium flex-shrink-0">
-                              {source}
+                  {Object.entries(extractedData.fieldConfidences)
+                    .filter(([field]) => field !== 'amount_subtotal' && field !== 'amountSubtotal')
+                    .map(([field, confidence]) => {
+                      const conf = confidence as number;
+                      const source = extractedData.fieldSources?.[field];
+                      return (
+                        <div key={field} className="flex items-center justify-between bg-white rounded p-3 border border-gray-200">
+                          <div className="flex items-center space-x-2 flex-1 min-w-0">
+                            <span className="text-sm text-gray-700 capitalize truncate">
+                              {field.replace(/([A-Z])/g, ' $1').trim()}
                             </span>
-                          )}
-                        </div>
-                        <div className="flex items-center space-x-3 ml-4">
-                          <div className="w-20 bg-gray-200 rounded-full h-1.5">
-                            <div
-                              className={`h-1.5 rounded-full transition-all ${
-                                conf >= 0.85 ? 'bg-green-500' :
-                                conf >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'
-                              }`}
-                              style={{ width: `${conf * 100}%` }}
-                            />
+                            {source && (
+                              <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium flex-shrink-0">
+                                {source}
+                              </span>
+                            )}
                           </div>
-                          <span className={`text-sm font-medium w-10 text-right ${
-                            conf >= 0.85 ? 'text-green-600' :
-                            conf >= 0.5 ? 'text-yellow-600' : 'text-red-600'
-                          }`}>
-                            {(conf * 100).toFixed(0)}%
-                          </span>
+                          <div className="flex items-center space-x-3 ml-4">
+                            <div className="w-20 bg-gray-200 rounded-full h-1.5">
+                              <div
+                                className={`h-1.5 rounded-full transition-all ${
+                                  conf >= 0.85 ? 'bg-green-500' :
+                                  conf >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'
+                                }`}
+                                style={{ width: `${conf * 100}%` }}
+                              />
+                            </div>
+                            <span className={`text-sm font-medium w-10 text-right ${
+                              conf >= 0.85 ? 'text-green-600' :
+                              conf >= 0.5 ? 'text-yellow-600' : 'text-red-600'
+                            }`}>
+                              {(conf * 100).toFixed(0)}%
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               </div>
             )}

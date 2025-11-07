@@ -7,7 +7,6 @@ export interface ExtractedData {
   invoiceNumber?: string;
   vendorName?: string;
   invoiceDate?: string;
-  dueDate?: string;
   totalAmount?: number;
   amountSubtotal?: number;
   amountTax?: number;
@@ -22,7 +21,6 @@ export interface ExtractedData {
     taxRate?: number;
     taxAmount?: number;
   };
-  paymentTerms?: string;
   rawExtraction?: Record<string, unknown>;
   // Python service fields
   fieldConfidences?: Record<string, number>;
@@ -38,6 +36,12 @@ export interface ExtractedData {
   arithmeticMismatch?: boolean;
   needsHumanReview?: boolean;
   llmCallReason?: string;
+  // Validation flags for invalid invoices
+  missingInvoiceId?: boolean;
+  missingTotal?: boolean;
+  missingVendorName?: boolean;
+  missingDate?: boolean;
+  isInvalid?: boolean;
 }
 
 export interface Document {

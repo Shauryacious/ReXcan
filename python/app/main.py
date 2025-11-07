@@ -246,7 +246,6 @@ async def process_invoice(job_id: str = Query(...)):
     
     invoice_id_result = extract_invoice_id(blocks)
     invoice_date_result = extract_date(blocks, "invoice")
-    due_date_result = extract_date(blocks, "due")
     # Extract total amount AFTER invoice ID (to exclude invoice IDs from totals)
     total_amount_result = extract_total_amount(blocks, invoice_id=invoice_id_result[0])
     currency_result = extract_currency(blocks, total_amount_result[0])
@@ -366,12 +365,6 @@ async def process_invoice(job_id: str = Query(...)):
     field_reasons["invoice_date"] = invoice_date_reason
     field_sources["invoice_date"] = "heuristic" if invoice_date_result[0] else "none"
     
-    due_date_conf, due_date_reason = compute_field_confidence(
-        "due_date", due_date_result[0], blocks, due_date_result
-    )
-    field_confidences["due_date"] = due_date_conf
-    field_reasons["due_date"] = due_date_reason
-    
     total_amount_conf, total_amount_reason = compute_field_confidence(
         "total_amount", str(total_amount_result[0]) if total_amount_result[0] else None,
         blocks, total_amount_result
@@ -438,14 +431,6 @@ async def process_invoice(job_id: str = Query(...)):
             fields_to_extract.append("invoice_date")
             llm_reasons["invoice_date"] = invoice_date_reason
         
-        due_date_should, due_date_reason = should_use_llm(
-            field_confidences.get("due_date", 0), "due_date", False, timings,
-            field_missing=(due_date_result[0] is None)
-        )
-        if due_date_should:
-            fields_to_extract.append("due_date")
-            llm_reasons["due_date"] = due_date_reason
-        
         total_amount_should, total_amount_reason = should_use_llm(
             field_confidences.get("total_amount", 0), "total_amount", True, timings,
             field_missing=(total_amount_result[0] is None)
@@ -508,10 +493,6 @@ async def process_invoice(job_id: str = Query(...)):
                         invoice_date_result = (llm_result["invoice_date"], 0.75, "LLM extraction")
                         field_confidences["invoice_date"] = min(0.85, field_confidences.get("invoice_date", 0) + 0.2)
                         field_sources["invoice_date"] = "llm"
-                    if "due_date" in llm_result and llm_result.get("due_date"):
-                        due_date_result = (llm_result["due_date"], 0.75, "LLM extraction")
-                        field_confidences["due_date"] = min(0.85, field_confidences.get("due_date", 0) + 0.2)
-                        field_sources["due_date"] = "llm"
                     if "total_amount" in llm_result and llm_result.get("total_amount"):
                         llm_total = llm_result["total_amount"]
                         # CRITICAL: Reject if LLM total matches invoice ID
@@ -575,7 +556,6 @@ async def process_invoice(job_id: str = Query(...)):
     
     invoice_id = invoice_id_result[0]
     invoice_date = canonicalize_date(invoice_date_result[0])
-    due_date = canonicalize_date(due_date_result[0]) if due_date_result[0] else None
     total_amount = canonicalize_amount(str(total_amount_result[0])) if total_amount_result[0] else None
     amount_tax = canonicalize_amount(str(tax_amount_result[0])) if tax_amount_result[0] else None
     amount_subtotal = canonicalize_amount(str(subtotal_result[0])) if subtotal_result[0] else None
@@ -596,56 +576,12 @@ async def process_invoice(job_id: str = Query(...)):
         hash_str = f"{vendor_id}|{invoice_id}|{total_amount}|{invoice_date}"
         dedupe_hash = hashlib.sha256(hash_str.encode('utf-8')).hexdigest()
     
-    # Step 5.6: Check for duplicates (enhanced with near-duplicate detection)
+    # Step 5.6: Duplicate detection will be handled by the database
+    # The dedupe_hash is computed and stored, but duplicate checking is done
+    # in the server by querying the database for existing documents with the same hash
     is_duplicate = False
     is_near_duplicate = False
     near_duplicates = []
-    
-    if dedupe_hash:
-        # Check against stored hashes (in-memory for now, can be moved to DB)
-        if "invoice_hashes" not in metrics_storage:
-            metrics_storage["invoice_hashes"] = set()
-            metrics_storage["invoice_data_list"] = []  # Store invoice data for near-duplicate detection
-        
-        if dedupe_hash in metrics_storage["invoice_hashes"]:
-            is_duplicate = True
-            print(f"  ⚠️  Duplicate invoice detected (hash: {dedupe_hash[:16]}...)")
-        else:
-            metrics_storage["invoice_hashes"].add(dedupe_hash)
-            
-            # Check for near-duplicates
-            from app.deduplication import check_duplicates
-            existing_invoices = metrics_storage.get("invoice_data_list", [])
-            is_exact, is_near, near_dup_list = check_duplicates(
-                {
-                    "vendor_id": vendor_id,
-                    "invoice_id": invoice_id,
-                    "total_amount": total_amount,
-                    "invoice_date": invoice_date,
-                    "job_id": job_id
-                },
-                metrics_storage["invoice_hashes"],
-                existing_invoices
-            )
-            
-            is_near_duplicate = is_near
-            near_duplicates = near_dup_list
-            
-            if is_near_duplicate:
-                print(f"  ⚠️  Near-duplicate detected: {len(near_duplicates)} similar invoices")
-            
-            # Store invoice data for future near-duplicate checks
-            metrics_storage["invoice_data_list"].append({
-                "job_id": job_id,
-                "vendor_id": vendor_id,
-                "invoice_id": invoice_id,
-                "total_amount": total_amount,
-                "invoice_date": invoice_date
-            })
-            
-            # Keep only last 1000 invoices for performance
-            if len(metrics_storage["invoice_data_list"]) > 1000:
-                metrics_storage["invoice_data_list"] = metrics_storage["invoice_data_list"][-1000:]
     
     # Step 5.7: Arithmetic validation (subtotal + tax = total)
     arithmetic_mismatch = False
@@ -691,7 +627,6 @@ async def process_invoice(job_id: str = Query(...)):
             "vendor_name": vendor_name,
             "vendor_id": vendor_id,
             "invoice_date": invoice_date,
-            "due_date": due_date,
             "total_amount": total_amount,
             "amount_subtotal": amount_subtotal,
             "amount_tax": amount_tax,
@@ -705,13 +640,19 @@ async def process_invoice(job_id: str = Query(...)):
         for k, v in field_reasons.items()
     }
     
+    # Validate invoice and set validation flags
+    missing_invoice_id = not invoice_id or invoice_id.strip() == ""
+    missing_total = total_amount is None
+    missing_vendor_name = not vendor_name or vendor_name.strip() == ""
+    missing_date = not invoice_date or invoice_date.strip() == ""
+    is_invalid = missing_invoice_id or missing_total or missing_vendor_name or missing_date
+    
     # Build result
     result = InvoiceExtract(
         invoice_id=invoice_id,
         vendor_name=vendor_name,
         vendor_id=vendor_id,
         invoice_date=invoice_date,
-        due_date=due_date,
         total_amount=total_amount,
         amount_subtotal=amount_subtotal,
         amount_tax=amount_tax,
@@ -728,7 +669,12 @@ async def process_invoice(job_id: str = Query(...)):
         is_duplicate=is_duplicate,
         is_near_duplicate=is_near_duplicate,  # Add near-duplicate flag
         near_duplicates=[{"job_id": jid, "similarity": sim} for jid, sim in near_duplicates[:5]],  # Top 5
-        arithmetic_mismatch=arithmetic_mismatch
+        arithmetic_mismatch=arithmetic_mismatch,
+        missing_invoice_id=missing_invoice_id,
+        missing_total=missing_total,
+        missing_vendor_name=missing_vendor_name,
+        missing_date=missing_date,
+        is_invalid=is_invalid
     )
     
     # Add human review flag to result dict
@@ -737,6 +683,11 @@ async def process_invoice(job_id: str = Query(...)):
     result_dict['llm_call_reason'] = llm_call_reason
     result_dict['is_duplicate'] = is_duplicate
     result_dict['arithmetic_mismatch'] = arithmetic_mismatch
+    result_dict['missing_invoice_id'] = missing_invoice_id
+    result_dict['missing_total'] = missing_total
+    result_dict['missing_vendor_name'] = missing_vendor_name
+    result_dict['missing_date'] = missing_date
+    result_dict['is_invalid'] = is_invalid
     
     # Save result
     output_path = get_output_path(job_id, "json")
@@ -913,7 +864,7 @@ async def verify_corrections(request: VerifyRequest, auto_promote: bool = Query(
         result_dict[field_name] = new_value
         
         # Re-canonicalize if needed
-        if field_name == "invoice_date" or field_name == "due_date":
+        if field_name == "invoice_date":
             result_dict[field_name] = canonicalize_date(new_value)
         elif field_name == "currency":
             result_dict[field_name] = canonicalize_currency(new_value)
@@ -925,6 +876,25 @@ async def verify_corrections(request: VerifyRequest, auto_promote: bool = Query(
             result_dict["vendor_id"] = vendor_id
     
     elapsed = time.time() - start_time
+    
+    # Recalculate validation flags after corrections
+    invoice_id = result_dict.get("invoice_id")
+    total_amount = result_dict.get("total_amount")
+    vendor_name = result_dict.get("vendor_name")
+    invoice_date = result_dict.get("invoice_date")
+    
+    missing_invoice_id = not invoice_id or (isinstance(invoice_id, str) and invoice_id.strip() == "")
+    missing_total = total_amount is None
+    missing_vendor_name = not vendor_name or (isinstance(vendor_name, str) and vendor_name.strip() == "")
+    missing_date = not invoice_date or (isinstance(invoice_date, str) and invoice_date.strip() == "")
+    is_invalid = missing_invoice_id or missing_total or missing_vendor_name or missing_date
+    
+    # Update validation flags in result
+    result_dict['missing_invoice_id'] = missing_invoice_id
+    result_dict['missing_total'] = missing_total
+    result_dict['missing_vendor_name'] = missing_vendor_name
+    result_dict['missing_date'] = missing_date
+    result_dict['is_invalid'] = is_invalid
     
     # Update metrics
     metrics_storage["total_correction_time"] += elapsed
@@ -963,7 +933,6 @@ def get_clean_invoice_data(result: Dict[str, Any]) -> Dict[str, Any]:
         "vendor_name": result.get("vendor_name"),
         "vendor_id": result.get("vendor_id"),
         "invoice_date": result.get("invoice_date"),
-        "due_date": result.get("due_date"),
         "total_amount": result.get("total_amount"),
         "amount_subtotal": result.get("amount_subtotal"),
         "amount_tax": result.get("amount_tax"),
@@ -989,7 +958,7 @@ def get_clean_invoice_data(result: Dict[str, Any]) -> Dict[str, Any]:
                 'sales', 'tax', 'subtotal', 'total', 'amount', 'payment', 'terms',
                 'many thanks', 'thank you', 'thanks for', 'thanks foryour', 'thanks for your',
                 'thanks for your business', 'thank you for your business', 'thanks foryour business',
-                'payment terms', 'to be received', 'within', 'days',
+                'to be received', 'within', 'days',
                 'please find', 'cost-breakdown', 'work completed', 'earliest convenience',
                 'do not hesitate', 'contact me', 'questions', 'dear', 'ms.', 'mr.',
                 'your name', 'sincerely', 'regards', 'best regards',
@@ -1118,7 +1087,6 @@ async def export_csv(job_id: str = Query(...), erp_type: str = Query("quickbooks
             writer.writerow(["Vendor Name", clean_data.get("vendor_name", "")])
             writer.writerow(["Vendor ID", clean_data.get("vendor_id", "")])
             writer.writerow(["Invoice Date", clean_data.get("invoice_date", "")])
-            writer.writerow(["Due Date", clean_data.get("due_date", "")])
             writer.writerow(["Subtotal", clean_data.get("amount_subtotal", "")])
             writer.writerow(["Tax", clean_data.get("amount_tax", "")])
             writer.writerow(["Total Amount", clean_data.get("total_amount", "")])

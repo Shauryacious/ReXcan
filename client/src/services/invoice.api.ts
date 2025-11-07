@@ -26,7 +26,6 @@ export interface InvoiceExtract {
   vendor_name?: string | null;
   vendor_id?: string | null;
   invoice_date?: string | null;
-  due_date?: string | null;
   total_amount?: number | null;
   amount_subtotal?: number | null;
   amount_tax?: number | null;
@@ -46,6 +45,12 @@ export interface InvoiceExtract {
   arithmetic_mismatch?: boolean;
   needs_human_review?: boolean;
   llm_call_reason?: string;
+  // Validation flags for invalid invoices
+  missing_invoice_id?: boolean;
+  missing_total?: boolean;
+  missing_vendor_name?: boolean;
+  missing_date?: boolean;
+  is_invalid?: boolean;
 }
 
 export interface LineItem {
