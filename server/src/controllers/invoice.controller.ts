@@ -259,9 +259,14 @@ export const exportCSV = asyncHandler(
         skipSafetyCheck
       );
 
-      // Convert blob to buffer
-      const arrayBuffer = await csvBlob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      // Convert blob to text to potentially merge with database data
+      const csvText = await csvBlob.text();
+      
+      // For now, we'll use the Python service CSV directly
+      // But we could enhance this to merge database data if needed
+      // The Python service already uses get_clean_invoice_data which normalizes line items
+      
+      const buffer = Buffer.from(csvText, 'utf-8');
 
       // Set headers for CSV download
       res.setHeader('Content-Type', 'text/csv');

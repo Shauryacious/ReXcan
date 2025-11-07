@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import type { Document } from '../types/document.types';
+
 import { documentAPI } from '../services/document.api';
+import type { Document, ExtractedData } from '../types/document.types';
 
 interface DocumentsListProps {
   refreshTrigger?: number;
@@ -52,6 +53,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
     void fetchDocuments();
     // Clear selections when documents refresh
     setSelectedDocuments(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTrigger]);
 
   const getStatusColor = (status: Document['status']) => {
@@ -129,7 +131,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
   const filteredDocuments = getFilteredDocuments();
 
 
-  const handleToggleSelect = (documentId: string, event: React.MouseEvent) => {
+  const handleToggleSelect = (documentId: string, event: React.MouseEvent | React.ChangeEvent<HTMLInputElement>) => {
     event.stopPropagation(); // Prevent triggering document select
     setSelectedDocuments((prev) => {
       const newSet = new Set(prev);
@@ -270,7 +272,7 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
               return { error: parsed.error || parsed.message, docId: doc.id, filename: doc.originalFileName };
             }
             return { data: parsed, docId: doc.id, filename: doc.originalFileName };
-          } catch (parseError) {
+          } catch {
             // If it's not JSON, it might be an error message
             if (text.includes('error') || text.includes('Error') || text.includes('failed')) {
               console.error(`Error in response for document ${doc.id}:`, text);
@@ -345,127 +347,67 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
         return;
       }
 
-      // Export each document as CSV using QuickBooks format (row-based) for better combination
-      const csvPromises = selectedDocs.map(async (doc) => {
+      // Fetch full document data to get latest saved data from database
+      const documentDataPromises = selectedDocs.map(async (doc) => {
         try {
-          const blob = await documentAPI.exportCSV(doc.id!, 'quickbooks', false);
-          
-          // Check if blob is actually an error response
-          if (blob.size === 0) {
-            console.error(`Empty CSV response for document ${doc.id}`);
-            return { error: 'Empty response', filename: doc.originalFileName };
+          const response = await documentAPI.getDocument(doc.id!);
+          if (response.success && response.data?.document) {
+            return { doc: response.data.document, error: null };
           }
-          
-          const text = await blob.text();
-          
-          // Check if response is an error message
-          if (text.includes('error') || text.includes('Error') || text.includes('failed') || text.startsWith('{')) {
-            try {
-              const parsed = JSON.parse(text);
-              if (parsed.error || parsed.message) {
-                console.error(`Error response for document ${doc.id}:`, parsed);
-                return { error: parsed.error || parsed.message, filename: doc.originalFileName };
-              }
-            } catch {
-              // Not JSON, might be HTML error page
-              if (text.length < 200 && (text.includes('error') || text.includes('Error'))) {
-                console.error(`Error in CSV response for document ${doc.id}:`, text);
-                return { error: text, filename: doc.originalFileName };
-              }
-            }
-          }
-          
-          return { csv: text, filename: doc.originalFileName };
+          return { doc, error: 'Failed to fetch document data' };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`Failed to export document ${doc.id} (${doc.originalFileName}):`, errorMessage);
-          return { error: errorMessage, filename: doc.originalFileName };
+          return { doc, error: error instanceof Error ? error.message : 'Unknown error' };
         }
       });
 
-      const results = await Promise.all(csvPromises);
-      const validResults = results.filter((r) => r && r.csv) as Array<{ filename: string; csv: string }>;
-      const errorResults = results.filter((r) => r && r.error) as Array<{ filename: string; error: string }>;
+      const documentDataResults = await Promise.all(documentDataPromises);
+      const validDocs = documentDataResults.filter(r => !r.error).map(r => r.doc);
+      const errorDocs = documentDataResults.filter(r => r.error);
 
-      if (validResults.length === 0) {
-        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
-        alert(`Failed to export any documents.\n\nErrors:\n${errorDetails || 'Unknown error'}\n\nPlease check the console for more details.`);
+      if (validDocs.length === 0) {
+        const errorDetails = errorDocs.map(r => `${r.doc.originalFileName}: ${r.error}`).join('\n');
+        alert(`Failed to fetch document data.\n\nErrors:\n${errorDetails || 'Unknown error'}`);
         return;
       }
 
-      if (errorResults.length > 0) {
-        const errorDetails = errorResults.map(r => `${r.filename}: ${r.error}`).join('\n');
-        console.warn(`Some documents failed to export:\n${errorDetails}`);
-      }
-
-      // Combine CSV data - extract headers from first document and combine rows
-      const csvLines: string[] = [];
+      // Convert documents to CSV format (user-facing, clean data)
+      const csvRows: string[] = [];
       
-      // Parse first document to get header structure
-      const firstDocLines = validResults[0].csv.split('\n').filter(line => line.trim());
-      if (firstDocLines.length === 0) {
-        alert('Invalid CSV format. Please try again.');
-        return;
-      }
+      // Header row - user-facing fields
+      const headers = [
+        'Document Name',
+        'Invoice ID',
+        'Vendor Name',
+        'Vendor ID',
+        'Invoice Date',
+        'Due Date',
+        'Subtotal',
+        'Tax',
+        'Total Amount',
+        'Currency'
+      ];
+      csvRows.push(headers.join(','));
 
-      // Find the header row (first non-empty line that looks like headers)
-      let headerRow = '';
-      let headerIndex = 0;
-      for (let i = 0; i < firstDocLines.length; i++) {
-        const line = firstDocLines[i].trim();
-        // Check if this looks like a header row (contains common CSV headers)
-        if (line.toLowerCase().includes('invoice') || 
-            line.toLowerCase().includes('vendor') || 
-            line.toLowerCase().includes('date') ||
-            line.split(',').length > 3) {
-          headerRow = line;
-          headerIndex = i;
-          break;
-        }
-      }
-
-      // If no clear header found, use first line
-      if (!headerRow && firstDocLines.length > 0) {
-        headerRow = firstDocLines[0];
-        headerIndex = 0;
-      }
-
-      // Add header with document name column
-      csvLines.push(`"Document Name",${headerRow}`);
-
-      // Add data rows from all documents
-      validResults.forEach((result) => {
-        const lines = result.csv.split('\n').filter(line => line.trim());
-        
-        // Find data rows (skip header and empty lines)
-        let foundHeader = false;
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          
-          // Skip the header row
-          if (!foundHeader && (line.toLowerCase().includes('invoice') || 
-                               line.toLowerCase().includes('vendor') ||
-                               line === headerRow)) {
-            foundHeader = true;
-            continue;
-          }
-          
-          // Skip "Line Items" section headers
-          if (line.toLowerCase().includes('line items') || 
-              line.toLowerCase() === 'description,quantity,unit price,total') {
-            continue;
-          }
-          
-          // Add data row with document filename
-          if (line && !line.toLowerCase().includes('field') && !line.toLowerCase().includes('value')) {
-            csvLines.push(`"${result.filename}",${line}`);
-          }
-        }
+      // Data rows - one row per document (no line items)
+      validDocs.forEach((doc) => {
+        const extractedData = doc.extractedData;
+        const row = [
+          `"${doc.originalFileName}"`,
+          extractedData?.invoiceNumber || '',
+          extractedData?.vendorName || '',
+          (extractedData as ExtractedData & { vendorId?: string })?.vendorId || '',
+          extractedData?.invoiceDate || '',
+          extractedData?.dueDate || '',
+          extractedData?.amountSubtotal?.toString() || '',
+          extractedData?.amountTax?.toString() || '',
+          extractedData?.totalAmount?.toString() || '',
+          extractedData?.currency || '',
+        ];
+        csvRows.push(row.join(','));
       });
 
       // Create combined CSV
-      const finalCSV = csvLines.join('\n');
+      const finalCSV = csvRows.join('\n');
 
       // Create and download the file
       const csvBlob = new Blob([finalCSV], { type: 'text/csv' });
@@ -477,6 +419,11 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+
+      if (errorDocs.length > 0) {
+        const errorDetails = errorDocs.map(r => `${r.doc.originalFileName}: ${r.error}`).join('\n');
+        console.warn(`Some documents failed to export:\n${errorDetails}`);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to export documents';
       alert(errorMessage);
@@ -721,16 +668,16 @@ const DocumentsList = ({ refreshTrigger, onDocumentSelect, onDocumentDeleted }: 
               </button>
             )}
           </div>
-          <button
-            onClick={() => void fetchDocuments()}
+        <button
+          onClick={() => void fetchDocuments()}
             className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors ml-auto"
             title="Refresh"
-          >
+        >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-          </button>
-        </div>
+        </button>
+      </div>
 
       {/* Select All Button - Material Design Style */}
       {filteredDocuments.length > 0 && (
