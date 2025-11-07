@@ -35,7 +35,11 @@
     "mongoose": "^8.19.3",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
-    "redis": "^5.9.0"
+    "redis": "^5.9.0",
+    "@google-cloud/pubsub": "^4.0.0",
+    "googleapis": "^144.0.0",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -45,6 +49,8 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.10.0",
+    "@types/imap": "^0.8.40",
+    "@types/mailparser": "^3.4.4",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "eslint": "^9.39.1",

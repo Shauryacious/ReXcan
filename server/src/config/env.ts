@@ -46,6 +46,28 @@ interface EnvConfig {
     openai: string;
     groq: string;
   };
+  pubsub: {
+    projectId: string;
+    topicName: string;
+    subscriptionName: string;
+    credentialsPath?: string;
+  };
+  email: {
+    provider: 'gmail' | 'imap';
+    gmail?: {
+      clientId: string;
+      clientSecret: string;
+      refreshToken: string;
+    };
+    imap?: {
+      host: string;
+      port: number;
+      user: string;
+      password: string;
+      tls: boolean;
+    };
+    pollInterval: number; // in milliseconds
+  };
 }
 
 const validateEnv = (): void => {
@@ -93,6 +115,28 @@ export const env: EnvConfig = {
     google: process.env.GOOGLE_API_KEY || '',
     openai: process.env.OPENAI_API_KEY || '',
     groq: process.env.GROQ_API_KEY || '',
+  },
+  pubsub: {
+    projectId: process.env.PUBSUB_PROJECT_ID || '',
+    topicName: process.env.PUBSUB_TOPIC_NAME || 'email-invoices',
+    subscriptionName: process.env.PUBSUB_SUBSCRIPTION_NAME || 'email-invoices-sub',
+    credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  },
+  email: {
+    provider: (process.env.EMAIL_PROVIDER || 'gmail') as 'gmail' | 'imap',
+    gmail: {
+      clientId: process.env.GMAIL_CLIENT_ID || '',
+      clientSecret: process.env.GMAIL_CLIENT_SECRET || '',
+      refreshToken: process.env.GMAIL_REFRESH_TOKEN || '',
+    },
+    imap: {
+      host: process.env.IMAP_HOST || 'imap.gmail.com',
+      port: parseInt(process.env.IMAP_PORT || '993', 10),
+      user: process.env.IMAP_USER || '',
+      password: process.env.IMAP_PASSWORD || '',
+      tls: process.env.IMAP_TLS !== 'false',
+    },
+    pollInterval: parseInt(process.env.EMAIL_POLL_INTERVAL || '60000', 10), // Default 1 minute
   },
 };
 

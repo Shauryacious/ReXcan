@@ -6,6 +6,7 @@ import { healthRoutes } from './routes/health.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { documentRoutes } from './routes/document.routes.js';
 import { invoiceRoutes } from './routes/invoice.routes.js';
+import { emailRoutes } from './routes/email.routes.js';
 
 const createApp = (): Express => {
   const app = express();
@@ -20,6 +21,7 @@ const createApp = (): Express => {
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/documents', documentRoutes);
   app.use('/api/v1/invoices', invoiceRoutes);
+  app.use('/api/v1/email', emailRoutes);
 
   // 404 handler
   app.use(notFoundHandler);
