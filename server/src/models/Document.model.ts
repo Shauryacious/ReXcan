@@ -77,6 +77,7 @@ export interface IDocument extends MongooseDocument {
     }>;
   };
   pythonJobId?: string; // Job ID from Python service
+  batchId?: string; // Batch ID for batch uploads
   createdAt: Date;
   updatedAt: Date;
 }
@@ -174,6 +175,7 @@ const documentSchema = new Schema<IDocument>(
       ocrBlocks: Schema.Types.Mixed,
     },
     pythonJobId: String,
+    batchId: String,
   },
   {
     timestamps: true,

@@ -12,6 +12,7 @@ export interface CreateDocumentInput {
   mimeType: string;
   fileSize: number;
   selectedModel?: string; // AI model: 'gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'
+  batchId?: string; // Optional batch ID for batch uploads
 }
 
 export const createDocument = async (
@@ -22,6 +23,7 @@ export const createDocument = async (
     const document = new Document({
       ...input,
       status: DocumentStatus.UPLOADED,
+      batchId: input.batchId,
     });
 
     await document.save();

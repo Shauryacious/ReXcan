@@ -533,9 +533,14 @@ async def process_invoice(job_id: str = Query(...)):
                         field_confidences["vendor_name"] = min(0.85, field_confidences.get("vendor_name", 0) + 0.2)
                         field_sources["vendor_name"] = "llm"
                 
-                    # Update reasons from LLM
+                    # Update reasons from LLM (filter out None values)
                     if "reasons" in llm_result:
-                        field_reasons.update(llm_result["reasons"])
+                        llm_reasons_clean = {
+                            k: (v if v is not None else "") 
+                            for k, v in llm_result["reasons"].items() 
+                            if v is not None
+                        }
+                        field_reasons.update(llm_reasons_clean)
                 else:
                     print(f"  ⚠️  LLM returned no results")
             except Exception as e:
@@ -672,6 +677,13 @@ async def process_invoice(job_id: str = Query(...)):
             "currency": currency
         }
     
+    # Filter out None values from field_reasons and convert to strings
+    # Pydantic requires Dict[str, str] - all values must be strings
+    cleaned_field_reasons = {
+        k: (str(v) if v is not None else "") 
+        for k, v in field_reasons.items()
+    }
+    
     # Build result
     result = InvoiceExtract(
         invoice_id=invoice_id,
@@ -686,7 +698,7 @@ async def process_invoice(job_id: str = Query(...)):
         line_items=extract_line_items_heuristic(blocks) if blocks else [],
         raw_ocr_blocks=blocks,
         field_confidences=field_confidences,
-        field_reasons=field_reasons,
+        field_reasons=cleaned_field_reasons,
         field_sources=field_sources,  # Track source per field
         timings=timings,
         llm_used=llm_used,

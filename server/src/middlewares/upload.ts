@@ -82,6 +82,19 @@ export const upload = multer({
   },
 });
 
+// Multer configuration for batch uploads
+export const uploadBatch = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max file size per file
+    files: 50, // Allow up to 50 files in batch
+  },
+});
+
 // Middleware for single file upload
 export const uploadSingle = upload.single('file');
+
+// Middleware for batch file upload
+export const uploadMultiple = uploadBatch.array('files', 50);
 

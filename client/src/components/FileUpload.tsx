@@ -3,16 +3,20 @@ import type { ChangeEvent, DragEvent } from 'react';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
+  onFilesSelect?: (files: File[]) => void; // New prop for batch upload
   maxSizeMB?: number;
   acceptedTypes?: string[];
   disabled?: boolean;
+  multiple?: boolean; // New prop to enable multiple file selection
 }
 
 const FileUpload = ({
   onFileSelect,
+  onFilesSelect,
   maxSizeMB = 50,
   acceptedTypes = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp'],
   disabled = false,
+  multiple = false,
 }: FileUploadProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const [_dragCounter, setDragCounter] = useState(0);
@@ -73,16 +77,49 @@ const FileUpload = ({
 
     if (disabled) return;
 
-    const files = e.dataTransfer.files;
+    const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
-      handleFile(files[0]);
+      if (multiple && onFilesSelect) {
+        // Batch upload
+        const validFiles = files.filter((file) => {
+          const maxSizeBytes = maxSizeMB * 1024 * 1024;
+          if (file.size > maxSizeBytes) {
+            return false;
+          }
+          const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+          return acceptedTypes.includes(fileExtension);
+        });
+        if (validFiles.length > 0) {
+          onFilesSelect(validFiles);
+        }
+      } else {
+        // Single file upload (backward compatible)
+        handleFile(files[0]);
+      }
     }
   };
 
   const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      handleFile(files[0]);
+      if (multiple && onFilesSelect) {
+        // Batch upload
+        const fileArray = Array.from(files);
+        const validFiles = fileArray.filter((file) => {
+          const maxSizeBytes = maxSizeMB * 1024 * 1024;
+          if (file.size > maxSizeBytes) {
+            return false;
+          }
+          const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+          return acceptedTypes.includes(fileExtension);
+        });
+        if (validFiles.length > 0) {
+          onFilesSelect(validFiles);
+        }
+      } else {
+        // Single file upload (backward compatible)
+        handleFile(files[0]);
+      }
     }
     // Reset input so same file can be selected again
     if (fileInputRef.current) {
@@ -142,6 +179,7 @@ const FileUpload = ({
           accept={acceptedTypes.join(',')}
           onChange={handleFileInputChange}
           disabled={disabled}
+          multiple={multiple}
           className="hidden"
         />
 
@@ -204,7 +242,9 @@ const FileUpload = ({
                 }
               `}
             >
-              {isDragging ? 'Drop your file here' : 'Drag & drop your file here'}
+              {isDragging 
+                ? `Drop your ${multiple ? 'files' : 'file'} here` 
+                : `Drag & drop your ${multiple ? 'files' : 'file'} here`}
             </p>
             <p
               className={`
@@ -244,7 +284,8 @@ const FileUpload = ({
             `}
           >
             <p>Supported formats: {acceptedTypes.join(', ')}</p>
-            <p>Maximum file size: {maxSizeMB}MB</p>
+            <p>Maximum file size: {maxSizeMB}MB {multiple ? 'per file' : ''}</p>
+            {multiple && <p className="text-[#00FFD8] font-medium">Multiple files supported</p>}
           </div>
         </div>
       </div>

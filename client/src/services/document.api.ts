@@ -48,6 +48,78 @@ class DocumentAPI {
   }
 
   /**
+   * Upload multiple documents (batch upload)
+   * @param files - Array of files to upload
+   * @param model - AI model to use for extraction
+   * @param onUploadProgress - Optional progress callback
+   */
+  async uploadDocumentsBatch(
+    files: File[],
+    model: string = 'best',
+    onUploadProgress?: (progress: number) => void
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      batchId: string;
+      documents: Array<{
+        id: string;
+        fileName: string;
+        originalFileName: string;
+        fileType: string;
+        fileSize: number;
+        status: string;
+        queueJobId: string;
+        createdAt: string;
+      }>;
+      total: number;
+      successful: number;
+      failed: number;
+    };
+  }> {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+    formData.append('model', model);
+
+    const response = await apiClient.post<{
+      success: boolean;
+      message: string;
+      data: {
+        batchId: string;
+        documents: Array<{
+          id: string;
+          fileName: string;
+          originalFileName: string;
+          fileType: string;
+          fileSize: number;
+          status: string;
+          queueJobId: string;
+          createdAt: string;
+        }>;
+        total: number;
+        successful: number;
+        failed: number;
+      };
+    }>('/documents/upload/batch', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onUploadProgress) {
+          const progress = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total
+          );
+          onUploadProgress(progress);
+        }
+      },
+      timeout: 300000, // 5 minutes timeout for batch uploads
+    });
+    return response.data;
+  }
+
+  /**
    * Get user's documents with pagination
    * @param limit - Number of documents per page
    * @param skip - Number of documents to skip

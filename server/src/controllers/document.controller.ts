@@ -6,6 +6,7 @@ import { ApiResponseHelper } from '../utils/apiResponse.js';
 import { logger } from '../utils/logger.js';
 import { AuthRequest } from '../types/auth.types.js';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 // Upload document (image or PDF)
 export const uploadDocument = asyncHandler(
@@ -181,6 +182,110 @@ export const updateDocument = asyncHandler(
       res,
       { document: updatedDocument },
       'Document updated successfully'
+    );
+  }
+);
+
+// Batch upload documents
+export const uploadDocumentsBatch = asyncHandler(
+  async (req: AuthRequest, res: Response): Promise<Response> => {
+    if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+      return ApiResponseHelper.badRequest(res, 'No files uploaded');
+    }
+
+    if (!req.user) {
+      return ApiResponseHelper.unauthorized(res, 'User not authenticated');
+    }
+
+    const userId = (req.user as { _id: { toString: () => string } })._id.toString();
+    const files = req.files as Express.Multer.File[];
+    const batchId = randomUUID();
+
+    // Get selected model from request body or query, default to 'best'
+    const selectedModel = (req.body.model || req.query.model || 'best') as string;
+
+    // Validate model
+    const validModels = ['gemini', 'openai', 'groq', 'claude', 'rexcan', 'best'];
+    const model = validModels.includes(selectedModel) ? selectedModel : 'best';
+
+    const results: Array<{
+      id: string;
+      fileName: string;
+      originalFileName: string;
+      fileType: string;
+      fileSize: number;
+      status: string;
+      queueJobId: string;
+      createdAt: string;
+      error?: string;
+    }> = [];
+
+    let successful = 0;
+    let failed = 0;
+
+    // Process each file
+    for (const file of files) {
+      try {
+        // Determine file type
+        const fileExtension = path.extname(file.originalname).toLowerCase();
+        const fileType =
+          fileExtension === '.pdf' ? DocumentType.PDF : DocumentType.IMAGE;
+
+        // Create document record and add to queue
+        const { document, jobId } = await createDocument({
+          userId,
+          fileName: file.filename,
+          originalFileName: file.originalname,
+          filePath: file.path,
+          fileType,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+          selectedModel: model,
+          batchId, // Add batch ID to track batch processing
+        });
+
+        results.push({
+          id: (document._id as { toString: () => string }).toString(),
+          fileName: document.fileName,
+          originalFileName: document.originalFileName,
+          fileType: document.fileType,
+          fileSize: document.fileSize,
+          status: document.status,
+          queueJobId: jobId,
+          createdAt: document.createdAt.toISOString(),
+        });
+
+        successful++;
+        logger.info(`Document uploaded in batch: ${document._id} by user: ${userId}`);
+      } catch (error) {
+        failed++;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.error(`Failed to upload file in batch: ${file.originalname}`, error);
+        
+        results.push({
+          id: '',
+          fileName: file.filename,
+          originalFileName: file.originalname,
+          fileType: '',
+          fileSize: file.size,
+          status: 'failed',
+          queueJobId: '',
+          createdAt: new Date().toISOString(),
+          error: errorMessage,
+        });
+      }
+    }
+
+    return ApiResponseHelper.success(
+      res,
+      {
+        batchId,
+        documents: results,
+        total: files.length,
+        successful,
+        failed,
+      },
+      `Batch upload completed: ${successful} successful, ${failed} failed`
     );
   }
 );

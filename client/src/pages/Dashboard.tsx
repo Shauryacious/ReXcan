@@ -16,12 +16,20 @@ const Dashboard = () => {
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<AIModel>('best');
+  const [uploadMode, setUploadMode] = useState<'single' | 'batch'>('single');
+  const [batchUploadResult, setBatchUploadResult] = useState<{
+    batchId: string;
+    total: number;
+    successful: number;
+    failed: number;
+  } | null>(null);
 
   const handleFileSelect = async (file: File) => {
     try {
       setIsUploading(true);
       setUploadError(null);
       setUploadSuccess(null);
+      setBatchUploadResult(null);
 
       const response = await documentAPI.uploadDocument(file, selectedModel);
 
@@ -39,6 +47,46 @@ const Dashboard = () => {
         error instanceof Error
           ? error.message
           : 'An error occurred while uploading the file';
+      setUploadError(errorMessage);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleFilesSelect = async (files: File[]) => {
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+      setUploadSuccess(null);
+      setBatchUploadResult(null);
+
+      const response = await documentAPI.uploadDocumentsBatch(files, selectedModel);
+
+      if (response.success) {
+        setBatchUploadResult({
+          batchId: response.data.batchId,
+          total: response.data.total,
+          successful: response.data.successful,
+          failed: response.data.failed,
+        });
+        setUploadSuccess(
+          `Batch upload completed: ${response.data.successful} successful, ${response.data.failed} failed`
+        );
+        // Refresh documents list
+        setRefreshTrigger((prev) => prev + 1);
+        // Clear success message after 10 seconds
+        setTimeout(() => {
+          setUploadSuccess(null);
+          setBatchUploadResult(null);
+        }, 10000);
+      } else {
+        throw new Error(response.message || 'Batch upload failed');
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'An error occurred while uploading files';
       setUploadError(errorMessage);
     } finally {
       setIsUploading(false);
@@ -88,9 +136,47 @@ const Dashboard = () => {
 
           {/* Upload Section */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-6">
-              Upload Document
-            </h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-medium text-gray-900">
+                Upload Document{uploadMode === 'batch' ? 's' : ''}
+              </h2>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadMode('single');
+                    setUploadError(null);
+                    setUploadSuccess(null);
+                    setBatchUploadResult(null);
+                  }}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    uploadMode === 'single'
+                      ? 'bg-[#00FFD8] text-gray-900'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  disabled={isUploading}
+                >
+                  Single
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadMode('batch');
+                    setUploadError(null);
+                    setUploadSuccess(null);
+                    setBatchUploadResult(null);
+                  }}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    uploadMode === 'batch'
+                      ? 'bg-[#00FFD8] text-gray-900'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  disabled={isUploading}
+                >
+                  Batch
+                </button>
+              </div>
+            </div>
 
             {/* Model Selection Card */}
             <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -172,6 +258,27 @@ const Dashboard = () => {
                   </svg>
                   {uploadSuccess}
                 </p>
+                {batchUploadResult && (
+                  <div className="mt-3 pt-3 border-t border-green-200">
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-green-700 font-medium">Total:</span>{' '}
+                        <span className="text-green-900">{batchUploadResult.total}</span>
+                      </div>
+                      <div>
+                        <span className="text-green-700 font-medium">Successful:</span>{' '}
+                        <span className="text-green-900">{batchUploadResult.successful}</span>
+                      </div>
+                      <div>
+                        <span className="text-green-700 font-medium">Failed:</span>{' '}
+                        <span className="text-green-900">{batchUploadResult.failed}</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-green-600 mt-2">
+                      Batch ID: {batchUploadResult.batchId}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -197,9 +304,11 @@ const Dashboard = () => {
 
             <FileUpload
               onFileSelect={handleFileSelect}
+              onFilesSelect={uploadMode === 'batch' ? handleFilesSelect : undefined}
               disabled={isUploading}
               maxSizeMB={50}
               acceptedTypes={['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp']}
+              multiple={uploadMode === 'batch'}
             />
           </div>
 
